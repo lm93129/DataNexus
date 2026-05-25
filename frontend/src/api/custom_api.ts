@@ -39,6 +39,6 @@ export function deleteCustomApi(id: number): Promise<void> {
   return request.delete(`/custom-apis/${id}`)
 }
 
-export function testCustomApi(id: number): Promise<{ success: boolean; message: string; status_code?: number; body_preview?: string }> {
-  return request.post(`/custom-apis/${id}/test`)
+export function testCustomApi(id: number, params?: Record<string, any>): Promise<{ success: boolean; message: string; status_code?: number; body_preview?: string; data?: any }> {
+  return request.post(`/custom-apis/${id}/test`, { params: params || {} })
 }

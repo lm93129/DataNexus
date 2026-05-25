@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -8,6 +9,10 @@ from app.models.user import User
 from app.schemas.custom_api import CustomApiCreate, CustomApiResponse, CustomApiUpdate
 from app.services.audit import AuditService
 from app.services.custom_api import CustomApiService
+
+
+class TestCallRequest(BaseModel):
+    params: dict = Field(default_factory=dict)
 
 router = APIRouter(prefix="/custom-apis", tags=["自定义API"])
 
@@ -120,12 +125,14 @@ async def delete_custom_api(
 async def test_custom_api(
     request: Request,
     api_id: int,
+    body: TestCallRequest | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("custom_api:read")),
 ):
     service = CustomApiService(db)
+    test_params = body.params if body else {}
     try:
-        result = await service.test_call(api_id)
+        result = await service.test_call(api_id, test_params=test_params)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return result

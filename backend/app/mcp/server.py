@@ -159,13 +159,15 @@ async def _handle_query(
 async def _handle_custom_api(db, arguments: dict) -> list[TextContent]:
     """调用预注册的自定义 API
 
-    从 custom_apis 表读取配置（url、method、headers），
-    使用 httpx 转发请求并返回响应文本（最多 5000 字符）。
+    根据 mode 分发：
+    - low_code: 使用精细执行引擎（参数路由、认证注入、响应提取）
+    - custom: 保持原有简单转发逻辑
     """
     import httpx
     from sqlalchemy import select
 
     from app.models.custom_api import CustomApi
+    from app.services.custom_api import CustomApiService
 
     api_name = arguments.get("api_name")
     params = arguments.get("params", {})
@@ -182,6 +184,19 @@ async def _handle_custom_api(db, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=f"API '{api_name}' 不存在或未启用")]
 
     config = json.loads(api.config_json)
+
+    # low_code 模式使用精细执行引擎
+    if api.mode == "low_code":
+        service = CustomApiService(db)
+        call_result = await service._execute_low_code(config, params)
+        if call_result.get("success"):
+            data = call_result.get("data", "")
+            text = json.dumps(data, ensure_ascii=False, default=str) if not isinstance(data, str) else data
+            return [TextContent(type="text", text=text[:5000])]
+        else:
+            return [TextContent(type="text", text=f"API调用失败: {call_result.get('message', '')}")]
+
+    # custom 模式保持原有逻辑
     url = config.get("url", "")
     method = config.get("method", "GET").upper()
     headers = config.get("headers", {})
@@ -192,7 +207,6 @@ async def _handle_custom_api(db, arguments: dict) -> list[TextContent]:
                 resp = await client.get(url, params=params, headers=headers)
             else:
                 resp = await client.request(method, url, json=params, headers=headers)
-            # 截断响应，避免超大响应占用过多 token
             return [TextContent(type="text", text=resp.text[:5000])]
     except Exception as e:
         return [TextContent(type="text", text=f"API调用失败: {str(e)}")]

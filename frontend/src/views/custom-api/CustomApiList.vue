@@ -8,7 +8,7 @@
     </n-card>
 
     <!-- 新建/编辑抽屉 -->
-    <n-drawer v-model:show="showDrawer" :width="500" placement="right">
+    <n-drawer v-model:show="showDrawer" :width="600" placement="right">
       <n-drawer-content :title="editingApi ? '编辑 API' : '新建 API'">
         <n-form :model="formData" label-placement="left" label-width="90">
           <n-form-item label="名称">
@@ -23,9 +23,16 @@
               <n-radio value="low_code">低代码</n-radio>
             </n-radio-group>
           </n-form-item>
-          <n-form-item label="配置 JSON">
-            <n-input v-model:value="formData.config_json" type="textarea" placeholder='{"url":"...","method":"GET","headers":{}}' :rows="6" font="monospace" />
-          </n-form-item>
+          <!-- low_code 模式：可视化表单 -->
+          <template v-if="formData.mode === 'low_code'">
+            <LowCodeConfigForm v-model:value="lowCodeConfig" />
+          </template>
+          <!-- custom 模式：JSON 编辑器 -->
+          <template v-else>
+            <n-form-item label="配置 JSON">
+              <n-input v-model:value="formData.config_json" type="textarea" placeholder='{"url":"...","method":"GET","headers":{}}' :rows="8" font="monospace" />
+            </n-form-item>
+          </template>
           <n-form-item label="启用">
             <n-switch v-model:value="formData.is_active" />
           </n-form-item>
@@ -38,6 +45,24 @@
         </template>
       </n-drawer-content>
     </n-drawer>
+
+    <!-- 测试参数对话框 -->
+    <TestParamsDialog
+      v-model:show="showTestDialog"
+      :params="testParams"
+      @confirm="handleTestConfirm"
+    />
+
+    <!-- 测试结果对话框 -->
+    <n-modal v-model:show="showTestResult" title="测试结果" preset="dialog" style="width: 600px">
+      <n-alert :type="testResult.success ? 'success' : 'error'" :title="testResult.message">
+        <n-text v-if="testResult.data !== undefined" code style="white-space: pre-wrap; word-break: break-all; display: block; max-height: 300px; overflow: auto">{{ typeof testResult.data === 'string' ? testResult.data : JSON.stringify(testResult.data, null, 2) }}</n-text>
+        <n-text v-else-if="testResult.body_preview" code style="white-space: pre-wrap; word-break: break-all; display: block; max-height: 300px; overflow: auto">{{ testResult.body_preview }}</n-text>
+      </n-alert>
+      <template #action>
+        <n-button @click="showTestResult = false">关闭</n-button>
+      </template>
+    </n-modal>
   </n-space>
 </template>
 
@@ -52,6 +77,8 @@ import {
   testCustomApi,
   type CustomApi,
 } from '@/api/custom_api'
+import LowCodeConfigForm, { type LowCodeConfig, type ParamDef } from './LowCodeConfigForm.vue'
+import TestParamsDialog from './TestParamsDialog.vue'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -67,13 +94,33 @@ const formData = ref({
   is_active: true,
 })
 
+const defaultLowCodeConfig: LowCodeConfig = {
+  url: '',
+  method: 'GET',
+  timeout: 30,
+  auth: { type: 'none', config: {} },
+  headers: {},
+  params: [],
+  body_template: null,
+  response: { extract: null, format: null },
+}
+
+const lowCodeConfig = ref<LowCodeConfig>({ ...defaultLowCodeConfig })
+
+// 测试相关
+const showTestDialog = ref(false)
+const testParams = ref<ParamDef[]>([])
+const testingApiId = ref<number | null>(null)
+const showTestResult = ref(false)
+const testResult = ref<{ success: boolean; message: string; data?: any; body_preview?: string }>({ success: false, message: '' })
+
 const tableColumns = [
   { title: '名称', key: 'name' },
   { title: '描述', key: 'description', ellipsis: { tooltip: true } },
   {
     title: '模式',
     key: 'mode',
-    render: (row: CustomApi) => h(NTag, { type: row.mode === 'custom' ? 'info' : 'warning', size: 'small' }, () => row.mode),
+    render: (row: CustomApi) => h(NTag, { type: row.mode === 'custom' ? 'info' : 'warning', size: 'small' }, () => row.mode === 'low_code' ? '低代码' : '自定义'),
   },
   {
     title: '状态',
@@ -104,6 +151,7 @@ async function loadApis() {
 function handleCreate() {
   editingApi.value = null
   formData.value = { name: '', description: '', mode: 'custom', config_json: '{"url":"","method":"GET","headers":{}}', is_active: true }
+  lowCodeConfig.value = { ...defaultLowCodeConfig, params: [], auth: { type: 'none', config: {} }, headers: {}, response: { extract: null, format: null } }
   showDrawer.value = true
 }
 
@@ -116,22 +164,45 @@ function handleEdit(api: CustomApi) {
     config_json: api.config_json,
     is_active: api.is_active,
   }
+  if (api.mode === 'low_code') {
+    try {
+      const parsed = JSON.parse(api.config_json)
+      lowCodeConfig.value = {
+        url: parsed.url || '',
+        method: parsed.method || 'GET',
+        timeout: parsed.timeout || 30,
+        auth: parsed.auth || { type: 'none', config: {} },
+        headers: parsed.headers || {},
+        params: parsed.params || [],
+        body_template: parsed.body_template || null,
+        response: parsed.response || { extract: null, format: null },
+      }
+    } catch {
+      lowCodeConfig.value = { ...defaultLowCodeConfig, params: [], auth: { type: 'none', config: {} }, headers: {}, response: { extract: null, format: null } }
+    }
+  }
   showDrawer.value = true
 }
 
 async function handleSave() {
-  try {
-    JSON.parse(formData.value.config_json)
-  } catch {
-    message.error('配置 JSON 格式无效')
-    return
+  let configJson = formData.value.config_json
+  if (formData.value.mode === 'low_code') {
+    configJson = JSON.stringify(lowCodeConfig.value)
+  } else {
+    try {
+      JSON.parse(configJson)
+    } catch {
+      message.error('配置 JSON 格式无效')
+      return
+    }
   }
   try {
+    const payload = { ...formData.value, config_json: configJson }
     if (editingApi.value) {
-      await updateCustomApi(editingApi.value.id, formData.value)
+      await updateCustomApi(editingApi.value.id, payload)
       message.success('已更新')
     } else {
-      await createCustomApi(formData.value)
+      await createCustomApi(payload)
       message.success('已创建')
     }
     showDrawer.value = false
@@ -147,13 +218,31 @@ async function handleToggle(api: CustomApi, val: boolean) {
 }
 
 async function handleTest(api: CustomApi) {
+  if (api.mode === 'low_code') {
+    try {
+      const config = JSON.parse(api.config_json)
+      testParams.value = config.params || []
+      testingApiId.value = api.id
+      if (testParams.value.length > 0) {
+        showTestDialog.value = true
+        return
+      }
+    } catch { /* 无参数直接调用 */ }
+  }
+  await executeTest(api.id, {})
+}
+
+async function handleTestConfirm(params: Record<string, any>) {
+  if (testingApiId.value) {
+    await executeTest(testingApiId.value, params)
+  }
+}
+
+async function executeTest(apiId: number, params: Record<string, any>) {
   try {
-    const res = await testCustomApi(api.id)
-    if (res.success) {
-      message.success(res.message)
-    } else {
-      message.error(res.message)
-    }
+    const res = await testCustomApi(apiId, params)
+    testResult.value = res
+    showTestResult.value = true
   } catch {
     message.error('测试请求失败')
   }
