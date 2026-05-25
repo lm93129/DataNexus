@@ -1,0 +1,16 @@
+# 文档目录（暂不提交）
+docs/
+
+# Playwright 测试产物
+.playwright-mcp/
+
+# 测试输出
+pytest_out.txt
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
