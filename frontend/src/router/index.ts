@@ -47,6 +47,16 @@ const router = createRouter({
           component: () => import('@/views/query/QueryView.vue'),
         },
         {
+          path: 'desensitize',
+          name: 'Desensitize',
+          component: () => import('@/views/desensitize/DesensitizeView.vue'),
+        },
+        {
+          path: 'custom-api',
+          name: 'CustomApi',
+          component: () => import('@/views/custom-api/CustomApiList.vue'),
+        },
+        {
           path: 'audit',
           name: 'Audit',
           component: () => import('@/views/audit/AuditView.vue'),

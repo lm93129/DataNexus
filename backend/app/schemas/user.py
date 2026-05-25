@@ -10,6 +10,7 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     role: str | None = Field(default=None, pattern=r"^(admin|analyst|viewer)$")
     is_active: bool | None = None
+    reset_password: str | None = Field(default=None, min_length=6)
 
 
 class UserResponse(BaseModel):
@@ -17,6 +18,7 @@ class UserResponse(BaseModel):
     username: str
     role: str
     is_active: bool
+    has_api_key: bool = False
     created_at: str | None = None
 
     model_config = {"from_attributes": True}

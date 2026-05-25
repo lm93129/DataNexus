@@ -48,50 +48,35 @@ DataNexus/
 
 ## 快速开始
 
-### 1. 启动后端依赖和服务
+### 方式一：Docker Compose（推荐）
 
-根目录提供的 `docker-compose.yml` 当前包含 PostgreSQL 和后端服务：
+一键启动全部服务（PostgreSQL + 后端 + 前端）：
 
 ```bash
 docker compose up -d
 ```
 
-后端默认访问地址：
+服务启动后：
+- 前端管理界面：http://localhost
+- 后端 API：http://localhost:8000
+- 健康检查：http://localhost:8000/health
+- 默认管理员：admin / admin123
 
-```text
-http://localhost:8000
-```
+### 方式二：本地开发
 
-健康检查：
+### 方式二：本地开发
 
-```text
-GET http://localhost:8000/health
-```
-
-### 2. 本地运行后端
+**后端：**
 
 ```bash
 cd backend
 uv venv
 uv pip install -e ".[dev]"
+uv run alembic upgrade head
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-运行测试：
-
-```bash
-cd backend
-uv run pytest -v
-```
-
-数据库迁移：
-
-```bash
-cd backend
-uv run alembic upgrade head
-```
-
-### 3. 本地运行前端
+**前端：**
 
 ```bash
 cd frontend
@@ -99,7 +84,14 @@ pnpm install
 pnpm dev
 ```
 
-构建前端：
+**运行测试：**
+
+```bash
+cd backend
+uv run pytest -v
+```
+
+**构建前端：**
 
 ```bash
 cd frontend
@@ -120,14 +112,23 @@ pnpm build
 
 | 路径 | 说明 |
 | --- | --- |
-| `GET /health` | 健康检查 |
+| `GET /health` | 健康检查（含数据库连通性） |
 | `POST /api/v1/auth/login` | 用户登录 |
+| `GET /api/v1/auth/me` | 当前用户信息 |
+| `POST /api/v1/auth/api-key/generate` | 生成 API Key |
+| `DELETE /api/v1/auth/api-key` | 撤销 API Key |
 | `GET /api/v1/datasources` | 数据源列表 |
 | `POST /api/v1/datasources` | 创建数据源 |
 | `GET /api/v1/metadata/tables/{id}` | 获取表列表 |
 | `GET /api/v1/metadata/columns/{id}` | 获取字段列表 |
+| `GET /api/v1/metadata/search` | 搜索表名/列名 |
 | `POST /api/v1/query/execute` | 执行 SQL 查询 |
+| `GET /api/v1/query/history` | 查询历史 |
+| `POST /api/v1/query/export` | 导出查询结果 CSV |
+| `GET /api/v1/desensitize-rules` | 脱敏规则列表 |
+| `GET /api/v1/custom-apis` | 自定义 API 列表 |
 | `GET /api/v1/audit/logs` | 审计日志查询 |
+| `GET /api/v1/dashboard/stats` | 仪表盘统计 |
 
 ## 重要文档
 

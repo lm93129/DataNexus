@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.permissions import require_permission
+from app.datasource.pool_manager import pool_manager
 from app.middleware.rate_limit import limiter
 from app.models.user import User
+from app.services.audit import AuditService
+from app.services.datasource import DatasourceService
 from app.services.metadata import MetadataService
 
 router = APIRouter(prefix="/metadata", tags=["元数据"])
@@ -35,10 +38,70 @@ async def get_columns(
     columns = await service.get_columns(table_metadata_id)
     return [
         {
+            "id": c.id,
             "column_name": c.column_name,
             "data_type": c.data_type,
             "column_comment": c.column_comment,
             "is_primary_key": c.is_primary_key,
+            "desensitize_rule": c.desensitize_rule,
         }
         for c in columns
     ]
+
+
+@router.post("/sync/{datasource_id}")
+@limiter.limit("5/minute")
+async def sync_metadata(
+    request: Request,
+    datasource_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("metadata:read")),
+):
+    ds_service = DatasourceService(db)
+    ds = await ds_service.get_by_id(datasource_id)
+    if not ds:
+        raise HTTPException(status_code=404, detail="数据源不存在")
+
+    try:
+        password = ds_service.get_password(ds)
+        engine = await pool_manager.get_engine(ds, password)
+        meta_service = MetadataService(db)
+        await meta_service.sync_from_source(datasource_id, engine)
+        tables = await meta_service.get_tables(datasource_id)
+
+        audit = AuditService(db)
+        await audit.log(
+            identity_id=user.id,
+            identity_type="user",
+            action="metadata_sync",
+            resource=f"datasource:{datasource_id}",
+            ip=request.client.host if request.client else None,
+            status="success",
+        )
+        return {"success": True, "table_count": len(tables)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
+
+
+@router.get("/search")
+@limiter.limit("60/minute")
+async def search_metadata(
+    request: Request,
+    keyword: str = Query(..., min_length=1, max_length=100),
+    datasource_id: int | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("metadata:read")),
+):
+    """搜索表名/列名/备注"""
+    service = MetadataService(db)
+    result = await service.search(keyword, datasource_id)
+    return {
+        "tables": [
+            {"id": t.id, "datasource_id": t.datasource_id, "table_name": t.table_name, "table_comment": t.table_comment}
+            for t in result["tables"]
+        ],
+        "columns": [
+            {"id": c.id, "table_metadata_id": c.table_metadata_id, "column_name": c.column_name, "data_type": c.data_type, "column_comment": c.column_comment}
+            for c in result["columns"]
+        ],
+    }

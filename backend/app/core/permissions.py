@@ -16,12 +16,16 @@ PERMISSION_MATRIX: dict[str, list[str]] = {
         "metadata:*",
         "audit:*",
         "user:*",
+        "desensitize:*",
+        "custom_api:*",
     ],
     UserRoleEnum.analyst.value: [
         "query:execute",
         "metadata:read",
         "audit:read",
         "datasource:read",
+        "desensitize:read",
+        "custom_api:read",
     ],
     UserRoleEnum.viewer.value: [
         "metadata:read",

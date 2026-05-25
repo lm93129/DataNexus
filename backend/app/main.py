@@ -77,4 +77,13 @@ app.routes.append(mcp_routes)
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": settings.app_name}
+    """健康检查：含数据库连通性"""
+    db_ok = False
+    try:
+        async with async_session_factory() as session:
+            await session.execute(select(1))
+            db_ok = True
+    except Exception:
+        pass
+    status = "ok" if db_ok else "degraded"
+    return {"status": status, "service": settings.app_name, "database": "connected" if db_ok else "disconnected"}

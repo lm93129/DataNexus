@@ -1,10 +1,25 @@
+import base64
 import hashlib
 import hmac
 from datetime import datetime, timedelta, timezone
 
+from cryptography.fernet import Fernet
 from jose import JWTError, jwt
 
 from app.core.config import settings
+
+
+def _get_fernet() -> Fernet:
+    key = hashlib.sha256(settings.secret_key.encode()).digest()
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
+def encrypt_api_key(raw_key: str) -> str:
+    return _get_fernet().encrypt(raw_key.encode()).decode()
+
+
+def decrypt_api_key(encrypted: str) -> str:
+    return _get_fernet().decrypt(encrypted.encode()).decode()
 
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:

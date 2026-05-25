@@ -44,6 +44,8 @@ import {
   DocumentTextOutline,
   StatsChartOutline,
   SettingsOutline,
+  ShieldCheckmarkOutline,
+  CodeSlashOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
@@ -62,6 +64,8 @@ const menuOptions = [
   { label: '数据源管理', key: 'Datasource', icon: renderIcon(ServerOutline) },
   { label: '元数据浏览', key: 'Metadata', icon: renderIcon(GridOutline) },
   { label: 'SQL查询', key: 'Query', icon: renderIcon(SearchOutline) },
+  { label: '脱敏规则', key: 'Desensitize', icon: renderIcon(ShieldCheckmarkOutline) },
+  { label: '自定义API', key: 'CustomApi', icon: renderIcon(CodeSlashOutline) },
   { label: '审计日志', key: 'Audit', icon: renderIcon(DocumentTextOutline) },
   { label: '系统设置', key: 'Settings', icon: renderIcon(SettingsOutline) },
 ]

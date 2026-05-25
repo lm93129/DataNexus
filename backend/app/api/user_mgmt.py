@@ -1,15 +1,28 @@
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.core.permissions import require_permission
-from app.core.security import hash_password, verify_password
+from app.core.security import decrypt_api_key, encrypt_api_key, hash_api_key, hash_password, verify_password
 from app.models.user import User
 from app.schemas.user import ChangePasswordRequest, UserCreate, UserResponse, UserUpdate
 from app.services.audit import AuditService
 
 router = APIRouter(prefix="/users", tags=["用户管理"])
+
+
+def _to_response(u: User) -> UserResponse:
+    return UserResponse(
+        id=u.id,
+        username=u.name,
+        role=u.role,
+        is_active=u.is_active,
+        has_api_key=bool(u.api_key_hash),
+        created_at=u.created_at.isoformat() if u.created_at else None,
+    )
 
 
 @router.get("", response_model=list[UserResponse])
@@ -18,17 +31,7 @@ async def list_users(
     user: User = Depends(require_permission("user:read")),
 ):
     result = await db.execute(select(User).where(User.identity_type == "user"))
-    users = result.scalars().all()
-    return [
-        UserResponse(
-            id=u.id,
-            username=u.name,
-            role=u.role,
-            is_active=u.is_active,
-            created_at=u.created_at.isoformat() if u.created_at else None,
-        )
-        for u in users
-    ]
+    return [_to_response(u) for u in result.scalars().all()]
 
 
 @router.post("", response_model=UserResponse, status_code=201)
@@ -62,17 +65,12 @@ async def create_user(
         ip=request.client.host if request.client else None,
         status="success",
     )
-    return UserResponse(
-        id=new_user.id,
-        username=new_user.name,
-        role=new_user.role,
-        is_active=new_user.is_active,
-        created_at=new_user.created_at.isoformat() if new_user.created_at else None,
-    )
+    return _to_response(new_user)
 
 
 @router.put("/{user_id}", response_model=UserResponse)
 async def update_user(
+    request: Request,
     user_id: int,
     data: UserUpdate,
     db: AsyncSession = Depends(get_db),
@@ -85,15 +83,21 @@ async def update_user(
         target.role = data.role
     if data.is_active is not None:
         target.is_active = data.is_active
+    if data.reset_password is not None:
+        target.password_hash = hash_password(data.reset_password)
     await db.commit()
     await db.refresh(target)
-    return UserResponse(
-        id=target.id,
-        username=target.name,
-        role=target.role,
-        is_active=target.is_active,
-        created_at=target.created_at.isoformat() if target.created_at else None,
+
+    audit = AuditService(db)
+    await audit.log_safe(
+        identity_id=user.id,
+        identity_type="user",
+        action="user_update",
+        resource=f"user:{user_id}",
+        ip=request.client.host if request.client else None,
+        status="success",
     )
+    return _to_response(target)
 
 
 @router.delete("/{user_id}", status_code=204)
@@ -133,3 +137,81 @@ async def change_password(
     user.password_hash = hash_password(data.new_password)
     await db.commit()
     return {"message": "密码修改成功"}
+
+
+@router.post("/{user_id}/api-key")
+async def generate_user_api_key(
+    request: Request,
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("user:update")),
+):
+    """管理员为指定用户生成 API Key"""
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    raw_key = f"dnx_{secrets.token_urlsafe(32)}"
+    target.api_key_hash = hash_api_key(raw_key)
+    target.api_key_encrypted = encrypt_api_key(raw_key)
+    await db.commit()
+
+    audit = AuditService(db)
+    await audit.log_safe(
+        identity_id=user.id,
+        identity_type="user",
+        action="generate_api_key",
+        resource=f"user:{user_id}",
+        ip=request.client.host if request.client else None,
+        status="success",
+    )
+    return {"api_key": raw_key, "message": "API Key 已生成"}
+
+
+@router.get("/{user_id}/api-key")
+async def get_user_api_key(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("user:read")),
+):
+    """查看指定用户的 API Key"""
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not target.api_key_encrypted:
+        return {"api_key": None}
+    try:
+        raw_key = decrypt_api_key(target.api_key_encrypted)
+        return {"api_key": raw_key}
+    except Exception:
+        return {"api_key": None}
+
+
+@router.delete("/{user_id}/api-key")
+async def revoke_user_api_key(
+    request: Request,
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("user:update")),
+):
+    """管理员撤销指定用户的 API Key"""
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not target.api_key_hash:
+        raise HTTPException(status_code=400, detail="该用户未配置 API Key")
+
+    target.api_key_hash = None
+    target.api_key_encrypted = None
+    await db.commit()
+
+    audit = AuditService(db)
+    await audit.log_safe(
+        identity_id=user.id,
+        identity_type="user",
+        action="revoke_api_key",
+        resource=f"user:{user_id}",
+        ip=request.client.host if request.client else None,
+        status="success",
+    )
+    return {"message": "API Key 已撤销"}

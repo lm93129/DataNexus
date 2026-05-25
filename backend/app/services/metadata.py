@@ -1,4 +1,4 @@
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.models.metadata import ColumnMetadata, TableMetadata
@@ -32,6 +32,39 @@ class MetadataService:
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def search(self, keyword: str, datasource_id: int | None = None, limit: int = 50) -> dict:
+        """搜索表名和列名，返回匹配结果"""
+        pattern = f"%{keyword}%"
+        # 搜索表
+        table_stmt = select(TableMetadata).where(
+            TableMetadata.is_blocked == False,
+            or_(
+                TableMetadata.table_name.ilike(pattern),
+                TableMetadata.table_comment.ilike(pattern),
+            ),
+        )
+        if datasource_id:
+            table_stmt = table_stmt.where(TableMetadata.datasource_id == datasource_id)
+        table_stmt = table_stmt.limit(limit)
+        table_result = await self.db.execute(table_stmt)
+        tables = table_result.scalars().all()
+
+        # 搜索列
+        col_stmt = select(ColumnMetadata).where(
+            ColumnMetadata.is_blocked == False,
+            or_(
+                ColumnMetadata.column_name.ilike(pattern),
+                ColumnMetadata.column_comment.ilike(pattern),
+            ),
+        )
+        if datasource_id:
+            col_stmt = col_stmt.join(TableMetadata).where(TableMetadata.datasource_id == datasource_id)
+        col_stmt = col_stmt.limit(limit)
+        col_result = await self.db.execute(col_stmt)
+        columns = col_result.scalars().all()
+
+        return {"tables": list(tables), "columns": list(columns)}
 
     async def sync_from_source(self, datasource_id: int, engine: AsyncEngine):
         """从真实数据源同步元数据到平台缓存（表+列）"""

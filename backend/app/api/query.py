@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +9,7 @@ from app.middleware.rate_limit import limiter
 from app.models.user import User
 from app.services.audit import AuditService
 from app.services.query import QueryService
+from app.services.query_history import QueryHistoryService
 
 
 class QueryRequest(BaseModel):
@@ -30,10 +32,21 @@ async def execute_query(
     result = await service.execute_query(
         datasource_id=body.datasource_id,
         sql=body.sql,
-        identity_id=user.id,  # 使用 User 对象的 id 属性，而非 payload dict
+        identity_id=user.id,
     )
 
-    # 审计日志（使用 log_safe 自动对 SQL 字面量脱敏）
+    # 保存查询历史
+    history_service = QueryHistoryService(db)
+    await history_service.save(
+        user_id=user.id,
+        datasource_id=body.datasource_id,
+        sql=body.sql,
+        status="success" if result["success"] else "error",
+        duration_ms=result.get("duration_ms"),
+        row_count=result.get("row_count"),
+    )
+
+    # 审计日志
     audit = AuditService(db)
     await audit.log_safe(
         identity_id=user.id,
@@ -48,3 +61,74 @@ async def execute_query(
     )
 
     return result
+
+
+@router.get("/history")
+@limiter.limit("60/minute")
+async def get_query_history(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("query:execute")),
+):
+    service = QueryHistoryService(db)
+    entries = await service.list_by_user(user.id)
+    return [
+        {
+            "id": e.id,
+            "datasource_id": e.datasource_id,
+            "sql": e.sql,
+            "status": e.status,
+            "duration_ms": e.duration_ms,
+            "row_count": e.row_count,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in entries
+    ]
+
+
+@router.delete("/history/{history_id}", status_code=204)
+async def delete_query_history(
+    history_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("query:execute")),
+):
+    service = QueryHistoryService(db)
+    deleted = await service.delete(history_id, user.id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="记录不存在")
+
+
+@router.post("/export")
+@limiter.limit("10/minute")
+async def export_query_csv(
+    request: Request,
+    body: QueryRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("query:execute")),
+):
+    """执行查询并以 CSV 格式返回结果"""
+    import csv
+    import io
+
+    service = QueryService(db)
+    result = await service.execute_query(
+        datasource_id=body.datasource_id,
+        sql=body.sql,
+        identity_id=user.id,
+    )
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result.get("error", "查询失败"))
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    columns = result.get("columns", [])
+    writer.writerow(columns)
+    for row in result.get("data", []):
+        writer.writerow([row.get(c, "") for c in columns])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=query_result.csv"},
+    )
