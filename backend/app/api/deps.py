@@ -52,17 +52,36 @@ async def get_api_key_identity(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """
-    校验 X-API-Key 请求头，遍历数据库中所有有 api_key_hash 的用户进行比对。
-    匹配成功后返回对应 User 对象；若账户已禁用返回 403，Key 无效返回 401。
+    校验 X-API-Key 请求头。
+    使用前缀索引（前 8 字符）快速定位候选用户，再对单条做 PBKDF2 验证。
     """
     if api_key is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未提供API Key")
     from app.core.security import verify_api_key
     from sqlalchemy import select
-    result = await db.execute(select(User).where(User.api_key_hash.isnot(None)))
+
+    prefix = api_key[:8]
+    # 前缀索引快速查找
+    result = await db.execute(
+        select(User).where(User.api_key_prefix == prefix, User.api_key_hash.isnot(None)).limit(5)
+    )
     for user in result.scalars():
         if verify_api_key(api_key, user.api_key_hash):
             if not user.is_active:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账户已禁用")
             return user
+
+    # Fallback：兼容 api_key_prefix 尚未回填的用户（迁移过渡期）
+    result = await db.execute(
+        select(User).where(User.api_key_prefix.is_(None), User.api_key_hash.isnot(None))
+    )
+    for user in result.scalars():
+        if verify_api_key(api_key, user.api_key_hash):
+            # 回填前缀，后续请求走快速路径
+            user.api_key_prefix = api_key[:8]
+            await db.commit()
+            if not user.is_active:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账户已禁用")
+            return user
+
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API Key无效")

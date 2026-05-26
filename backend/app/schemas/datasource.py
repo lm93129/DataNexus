@@ -1,28 +1,28 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DatasourceCreate(BaseModel):
-    name: str
-    type: str  # mysql/postgresql/mssql/oracle
-    host: str
-    port: int
-    database: str
-    username: str
-    password: str
-    description: str | None = None
+    name: str = Field(..., min_length=1, max_length=100)
+    type: str = Field(..., pattern=r"^(mysql|postgresql|mssql|oracle)$")
+    host: str = Field(..., min_length=1, max_length=255)
+    port: int = Field(..., ge=1, le=65535)
+    database: str = Field(..., min_length=1, max_length=255)
+    username: str = Field(..., min_length=1, max_length=255)
+    password: str = Field(..., min_length=1, max_length=500)
+    description: str | None = Field(default=None, max_length=500)
     table_blacklist: str | None = "[]"
     column_blacklist: str | None = "[]"
 
 
 class DatasourceUpdate(BaseModel):
-    name: str | None = None
-    host: str | None = None
-    port: int | None = None
-    database: str | None = None
-    username: str | None = None
-    password: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    host: str | None = Field(default=None, max_length=255)
+    port: int | None = Field(default=None, ge=1, le=65535)
+    database: str | None = Field(default=None, max_length=255)
+    username: str | None = Field(default=None, max_length=255)
+    password: str | None = Field(default=None, max_length=500)
     is_active: bool | None = None
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=500)
     table_blacklist: str | None = None
     column_blacklist: str | None = None
 

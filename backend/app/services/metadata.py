@@ -132,16 +132,16 @@ class MetadataService:
 
         return {"tables": list(tables), "columns": list(columns)}
 
-    async def sync_from_source(self, datasource_id: int, engine: AsyncEngine):
-        """从真实数据源同步元数据到平台缓存（表+列）"""
+    async def sync_from_source(self, datasource_id: int, engine: AsyncEngine, ds_type: str = "postgresql"):
+        """从真实数据源同步元数据到平台缓存（表+列）
+
+        根据数据源类型使用不同的元数据采集 SQL。
+        """
+        tables_sql, columns_sql_fn = self._get_metadata_queries(ds_type)
+
         async with engine.connect() as conn:
             # 同步表
-            tables_result = await conn.execute(
-                text(
-                    "SELECT table_name FROM information_schema.tables "
-                    "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
-                )
-            )
+            tables_result = await conn.execute(text(tables_sql))
             for row in tables_result:
                 existing = await self.db.execute(
                     select(TableMetadata).where(
@@ -159,24 +159,9 @@ class MetadataService:
                     await self.db.flush()
 
                 # 同步该表的列信息
+                cols_sql = columns_sql_fn()
                 cols_result = await conn.execute(
-                    text(
-                        "SELECT c.column_name, c.data_type, "
-                        "col_description(cls.oid, c.ordinal_position) as column_comment, "
-                        "CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_pk "
-                        "FROM information_schema.columns c "
-                        "JOIN pg_class cls ON cls.relname = c.table_name "
-                        "JOIN pg_namespace ns ON ns.oid = cls.relnamespace AND ns.nspname = c.table_schema "
-                        "LEFT JOIN ("
-                        "  SELECT ku.column_name, ku.table_name "
-                        "  FROM information_schema.table_constraints tc "
-                        "  JOIN information_schema.key_column_usage ku ON tc.constraint_name = ku.constraint_name "
-                        "  WHERE tc.constraint_type = 'PRIMARY KEY'"
-                        ") pk ON pk.column_name = c.column_name AND pk.table_name = c.table_name "
-                        "WHERE c.table_schema = current_schema() AND c.table_name = :tbl "
-                        "ORDER BY c.ordinal_position"
-                    ),
-                    {"tbl": row.table_name},
+                    text(cols_sql), {"tbl": row.table_name}
                 )
                 existing_cols = await self.db.execute(
                     select(ColumnMetadata).where(
@@ -191,9 +176,96 @@ class MetadataService:
                             table_metadata_id=table_meta.id,
                             column_name=col.column_name,
                             data_type=col.data_type,
-                            column_comment=col.column_comment,
-                            is_primary_key=col.is_pk,
+                            column_comment=getattr(col, 'column_comment', None),
+                            is_primary_key=getattr(col, 'is_pk', False),
                             is_blocked=False,
                         ))
 
             await self.db.commit()
+
+    def _get_metadata_queries(self, ds_type: str) -> tuple[str, callable]:
+        """根据数据源类型返回表列表 SQL 和列信息 SQL 工厂函数"""
+        if ds_type == "postgresql":
+            tables_sql = (
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
+            )
+            def columns_fn():
+                return (
+                    "SELECT c.column_name, c.data_type, "
+                    "col_description(cls.oid, c.ordinal_position) as column_comment, "
+                    "CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_pk "
+                    "FROM information_schema.columns c "
+                    "JOIN pg_class cls ON cls.relname = c.table_name "
+                    "JOIN pg_namespace ns ON ns.oid = cls.relnamespace AND ns.nspname = c.table_schema "
+                    "LEFT JOIN ("
+                    "  SELECT ku.column_name, ku.table_name "
+                    "  FROM information_schema.table_constraints tc "
+                    "  JOIN information_schema.key_column_usage ku ON tc.constraint_name = ku.constraint_name "
+                    "  WHERE tc.constraint_type = 'PRIMARY KEY'"
+                    ") pk ON pk.column_name = c.column_name AND pk.table_name = c.table_name "
+                    "WHERE c.table_schema = current_schema() AND c.table_name = :tbl "
+                    "ORDER BY c.ordinal_position"
+                )
+        elif ds_type == "mysql":
+            tables_sql = (
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
+            )
+            def columns_fn():
+                return (
+                    "SELECT c.column_name, c.data_type, "
+                    "c.column_comment, "
+                    "CASE WHEN c.column_key = 'PRI' THEN true ELSE false END as is_pk "
+                    "FROM information_schema.columns c "
+                    "WHERE c.table_schema = DATABASE() AND c.table_name = :tbl "
+                    "ORDER BY c.ordinal_position"
+                )
+        elif ds_type == "mssql":
+            tables_sql = (
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'dbo' AND table_type = 'BASE TABLE'"
+            )
+            def columns_fn():
+                return (
+                    "SELECT c.column_name, c.data_type, "
+                    "CAST(ep.value AS NVARCHAR(500)) as column_comment, "
+                    "CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END as is_pk "
+                    "FROM information_schema.columns c "
+                    "LEFT JOIN sys.extended_properties ep "
+                    "  ON ep.major_id = OBJECT_ID(c.table_schema + '.' + c.table_name) "
+                    "  AND ep.minor_id = c.ordinal_position AND ep.name = 'MS_Description' "
+                    "LEFT JOIN ("
+                    "  SELECT ku.column_name, ku.table_name "
+                    "  FROM information_schema.table_constraints tc "
+                    "  JOIN information_schema.key_column_usage ku ON tc.constraint_name = ku.constraint_name "
+                    "  WHERE tc.constraint_type = 'PRIMARY KEY'"
+                    ") pk ON pk.column_name = c.column_name AND pk.table_name = c.table_name "
+                    "WHERE c.table_schema = 'dbo' AND c.table_name = :tbl "
+                    "ORDER BY c.ordinal_position"
+                )
+        elif ds_type == "oracle":
+            tables_sql = (
+                "SELECT table_name FROM user_tables"
+            )
+            def columns_fn():
+                return (
+                    "SELECT c.column_name, c.data_type, "
+                    "cc.comments as column_comment, "
+                    "CASE WHEN pk.column_name IS NOT NULL THEN 1 ELSE 0 END as is_pk "
+                    "FROM user_tab_columns c "
+                    "LEFT JOIN user_col_comments cc "
+                    "  ON cc.table_name = c.table_name AND cc.column_name = c.column_name "
+                    "LEFT JOIN ("
+                    "  SELECT cols.column_name, cols.table_name "
+                    "  FROM user_constraints cons "
+                    "  JOIN user_cons_columns cols ON cons.constraint_name = cols.constraint_name "
+                    "  WHERE cons.constraint_type = 'P'"
+                    ") pk ON pk.column_name = c.column_name AND pk.table_name = c.table_name "
+                    "WHERE c.table_name = :tbl "
+                    "ORDER BY c.column_id"
+                )
+        else:
+            raise ValueError(f"不支持的数据源类型: {ds_type}")
+
+        return tables_sql, columns_fn

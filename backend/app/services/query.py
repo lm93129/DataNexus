@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 
 import sqlglot
@@ -9,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.datasource.pool_manager import pool_manager
 from app.services.security import DataDesensitizer, SqlRiskControl
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_table_names(sql: str, dialect: str | None = None) -> set[str]:
@@ -62,8 +65,16 @@ class QueryService:
         if not validation.is_safe:
             return {"success": False, "error": validation.reason, "data": []}
 
+        # 二次防御：确保 sqlglot 能完整解析 SQL，拒绝无法解析的语句
+        try:
+            parsed = sqlglot.parse(sql)
+            if not parsed or parsed[0] is None:
+                return {"success": False, "error": "SQL 解析失败：无法生成有效 AST", "data": []}
+        except Exception as e:
+            return {"success": False, "error": f"SQL 解析失败：{str(e)}", "data": []}
+
         # 行数限制（AST级），支持动态覆盖
-        effective_max_rows = max_rows_override or settings.max_query_rows
+        effective_max_rows = max_rows_override if max_rows_override is not None else settings.max_query_rows
         sql = self.risk_control.apply_row_limit(sql, effective_max_rows)
 
         # 执行查询
@@ -88,6 +99,16 @@ class QueryService:
 
             start = time.time()
             async with engine.connect() as conn:
+                # 设置语句超时（防止慢查询占用资源）
+                timeout_ms = settings.query_timeout_ms
+                try:
+                    if "postgresql" in str(engine.url):
+                        await conn.execute(text(f"SET statement_timeout = {int(timeout_ms)}"))
+                    elif "mysql" in str(engine.url):
+                        await conn.execute(text(f"SET max_execution_time = {int(timeout_ms)}"))
+                except Exception:
+                    logger.debug("无法设置 statement_timeout，继续执行")
+
                 result = await conn.execute(text(sql))
                 columns = list(result.keys())
                 rows = [dict(zip(columns, row)) for row in result.fetchall()]

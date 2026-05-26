@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+
+logger = logging.getLogger(__name__)
 from app.core.permissions import require_permission
 from app.datasource.pool_manager import pool_manager
 from app.middleware.rate_limit import limiter
@@ -139,5 +143,5 @@ async def test_datasource_connection(
                 datasource_id=ds_id,
             )
         except Exception:
-            pass
+            logger.exception("连接测试失败时告警检测异常")
         return {"success": False, "message": f"连接失败: {str(e)}"}

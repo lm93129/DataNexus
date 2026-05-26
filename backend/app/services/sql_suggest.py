@@ -1,4 +1,5 @@
 import difflib
+import logging
 import re
 
 import sqlglot
@@ -7,6 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.metadata import ColumnMetadata, TableMetadata
+
+logger = logging.getLogger(__name__)
 
 
 class SqlSuggestionService:
@@ -132,7 +135,7 @@ class SqlSuggestionService:
                                     "original": tname,
                                 })
             except Exception:
-                pass
+                logger.debug("表名模糊匹配异常", exc_info=True)
 
         return suggestions
 

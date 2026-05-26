@@ -10,10 +10,19 @@ export interface LoginResult {
   token_type: string
 }
 
+export interface UserProfile {
+  id: number
+  name: string
+  identity_type: string
+  role: string
+  is_active: boolean
+  has_api_key: boolean
+}
+
 export function login(data: LoginParams): Promise<LoginResult> {
   return request.post('/auth/login', data)
 }
 
-export function getMe(): Promise<Record<string, unknown>> {
+export function getMe(): Promise<UserProfile> {
   return request.get('/auth/me')
 }

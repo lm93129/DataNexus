@@ -1,12 +1,19 @@
+import asyncio
+import logging
+from collections import OrderedDict
 from urllib.parse import quote_plus
 
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.models.datasource import Datasource
 
+logger = logging.getLogger(__name__)
+
+MAX_POOL_SIZE = 50
+
 
 class PoolManager:
-    """管理多数据源的连接池，按数据源ID路由"""
+    """管理多数据源的连接池，按数据源ID路由，LRU 淘汰策略"""
 
     DRIVER_MAP = {
         "mysql": "mysql+aiomysql",
@@ -22,8 +29,10 @@ class PoolManager:
         "oracle": "oracledb",
     }
 
-    def __init__(self):
-        self._engines: dict[int, AsyncEngine] = {}
+    def __init__(self, maxsize: int = MAX_POOL_SIZE):
+        self._engines: OrderedDict[int, AsyncEngine] = OrderedDict()
+        self._maxsize = maxsize
+        self._lock = asyncio.Lock()
 
     def _check_driver(self, ds_type: str):
         """检查对应驱动是否已安装。
@@ -53,10 +62,27 @@ class PoolManager:
         return f"{driver}://{username}:{pwd}@{ds.host}:{ds.port}/{ds.database}"
 
     async def get_engine(self, ds: Datasource, password: str) -> AsyncEngine:
-        if ds.id not in self._engines:
+        async with self._lock:
+            if ds.id in self._engines:
+                # LRU：移到末尾表示最近使用
+                self._engines.move_to_end(ds.id)
+                return self._engines[ds.id]
+
+            # 淘汰最久未使用的 engine
+            while len(self._engines) >= self._maxsize:
+                evicted_id, evicted_engine = self._engines.popitem(last=False)
+                logger.info("LRU 淘汰连接池: datasource_id=%s", evicted_id)
+                await evicted_engine.dispose()
+
             url = self._build_url(ds, password)
-            self._engines[ds.id] = create_async_engine(url, pool_size=5, max_overflow=10)
-        return self._engines[ds.id]
+            self._engines[ds.id] = create_async_engine(
+                url, pool_size=5, max_overflow=10, pool_pre_ping=True
+            )
+            return self._engines[ds.id]
+
+    async def invalidate(self, ds_id: int):
+        """数据源凭证变更时调用，清除缓存的 engine 以强制重建连接"""
+        await self.remove_engine(ds_id)
 
     async def remove_engine(self, ds_id: int):
         if ds_id in self._engines:

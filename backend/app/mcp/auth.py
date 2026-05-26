@@ -62,9 +62,28 @@ async def authenticate_mcp_request(request: Request, db):
     if api_key:
         from sqlalchemy import select
 
-        result = await db.execute(select(User).where(User.api_key_hash.isnot(None)))
+        prefix = api_key[:8]
+        # 前缀索引快速查找
+        result = await db.execute(
+            select(User).where(User.api_key_prefix == prefix, User.api_key_hash.isnot(None)).limit(5)
+        )
         for user in result.scalars():
             if verify_api_key(api_key, user.api_key_hash):
+                if not user.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="账户已禁用",
+                    )
+                return user
+
+        # Fallback：兼容 api_key_prefix 尚未回填的用户（迁移过渡期）
+        result = await db.execute(
+            select(User).where(User.api_key_prefix.is_(None), User.api_key_hash.isnot(None))
+        )
+        for user in result.scalars():
+            if verify_api_key(api_key, user.api_key_hash):
+                user.api_key_prefix = api_key[:8]
+                await db.commit()
                 if not user.is_active:
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,

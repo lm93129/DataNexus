@@ -21,6 +21,7 @@ class User(Base, TimestampMixin):
     identity_type: Mapped[str] = mapped_column(String(20))  # user/app/model
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     api_key_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_key_prefix: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
     api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # RBAC 角色字段，默认为 viewer（最低权限）

@@ -1,15 +1,18 @@
 import base64
 import ipaddress
 import json
+import logging
 import re
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.custom_api import CustomApi
+
+logger = logging.getLogger(__name__)
 
 BLOCKED_NETWORKS = [
     ipaddress.ip_network("10.0.0.0/8"),
@@ -43,6 +46,45 @@ def _is_ssrf_target(url: str) -> bool:
     except (socket.gaierror, ValueError):
         return True
     return False
+
+
+def _resolve_and_pin(url: str) -> tuple[str, str]:
+    """解析 URL 中的主机名并固定 IP，返回 (替换后的 URL, 原始 Host)。
+
+    通过将 URL 中的 hostname 替换为解析后的 IP，确保预检和实际请求访问同一地址，
+    防止 TOCTOU 类型的 SSRF 攻击（DNS rebinding）。
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("URL 缺少主机名")
+
+    # 解析 DNS 并取第一个 IPv4 地址
+    try:
+        resolved = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
+    except socket.gaierror:
+        raise ValueError(f"无法解析主机名: {hostname}")
+
+    pinned_ip = None
+    for _, _, _, _, addr in resolved:
+        ip = ipaddress.ip_address(addr[0])
+        if ip.version == 4:
+            pinned_ip = str(ip)
+            break
+    if not pinned_ip:
+        # fallback 到第一个地址
+        pinned_ip = str(ipaddress.ip_address(resolved[0][4][0]))
+
+    # 二次 SSRF 校验（对实际解析的 IP）
+    for net in BLOCKED_NETWORKS:
+        if ipaddress.ip_address(pinned_ip) in net:
+            raise ValueError("安全限制：解析后的地址指向内网")
+
+    # 替换 URL 中的 hostname 为固定 IP（使用 urlunparse 精确替换 netloc）
+    new_netloc = f"{pinned_ip}:{parsed.port}" if parsed.port else pinned_ip
+    pinned_url = urlunparse(parsed._replace(netloc=new_netloc))
+
+    return pinned_url, hostname
 
 
 def _extract_json_path(data, path: str):
@@ -127,12 +169,16 @@ class CustomApiService:
         method = config.get("method", "GET").upper()
         headers = config.get("headers", {})
 
-        if _is_ssrf_target(url):
-            return {"success": False, "message": "安全限制：不允许访问内网地址"}
+        # DNS 固定（内含 SSRF 校验，无需单独调用 _is_ssrf_target）
+        try:
+            pinned_url, original_host = _resolve_and_pin(url)
+            headers["Host"] = original_host
+        except ValueError as e:
+            return {"success": False, "message": f"安全限制：{str(e)}"}
 
         try:
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
-                resp = await client.request(method, url, headers=headers)
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, verify=True) as client:
+                resp = await client.request(method, pinned_url, headers=headers)
                 return {
                     "success": True,
                     "status_code": resp.status_code,
@@ -146,7 +192,7 @@ class CustomApiService:
         """低代码模式精细执行引擎"""
         url = config.get("url", "")
         method = config.get("method", "GET").upper()
-        timeout = config.get("timeout", 30)
+        timeout = min(config.get("timeout", 30), 120)
         headers = dict(config.get("headers", {}))
         param_defs = config.get("params", [])
         body_template = config.get("body_template")
@@ -213,18 +259,21 @@ class CustomApiService:
             elif body_data:
                 request_body = body_data
 
-        # 4. SSRF 检查
-        if _is_ssrf_target(url):
-            return {"success": False, "message": "安全限制：不允许访问内网地址"}
+        # 4. SSRF 检查 + DNS 固定（_resolve_and_pin 内含 SSRF 校验）
+        try:
+            pinned_url, original_host = _resolve_and_pin(url)
+            headers["Host"] = original_host
+        except ValueError as e:
+            return {"success": False, "message": f"安全限制：{str(e)}"}
 
         # 5. 发送请求
         try:
-            async with httpx.AsyncClient(timeout=float(timeout), follow_redirects=False) as client:
+            async with httpx.AsyncClient(timeout=float(timeout), follow_redirects=False, verify=True) as client:
                 if method == "GET":
-                    resp = await client.get(url, params=query_params, headers=headers)
+                    resp = await client.get(pinned_url, params=query_params, headers=headers)
                 else:
                     resp = await client.request(
-                        method, url,
+                        method, pinned_url,
                         params=query_params,
                         json=request_body,
                         headers=headers,

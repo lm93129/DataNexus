@@ -7,14 +7,17 @@ from app.core.security import create_access_token, decrypt_api_key, encrypt_api_
 from app.middleware.rate_limit import limiter
 from app.models.user import User
 from app.services.audit import AuditService
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+import logging
 import secrets
+
+logger = logging.getLogger(__name__)
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=200)
 
 
 class UserProfile(BaseModel):
@@ -95,6 +98,7 @@ async def get_my_api_key(
         raw_key = decrypt_api_key(user.api_key_encrypted)
         return {"api_key": raw_key}
     except Exception:
+        logger.warning("解密 API Key 失败: user_id=%s", user.id)
         return {"api_key": None}
 
 
@@ -108,6 +112,7 @@ async def generate_api_key(
     """生成新的 API Key（旧 Key 立即失效）"""
     raw_key = f"dnx_{secrets.token_urlsafe(32)}"
     user.api_key_hash = hash_api_key(raw_key)
+    user.api_key_prefix = raw_key[:8]
     user.api_key_encrypted = encrypt_api_key(raw_key)
     await db.commit()
     await db.refresh(user)
@@ -134,6 +139,7 @@ async def revoke_api_key(
     if not user.api_key_hash:
         raise HTTPException(status_code=400, detail="当前未配置 API Key")
     user.api_key_hash = None
+    user.api_key_prefix = None
     user.api_key_encrypted = None
     await db.commit()
     await db.refresh(user)

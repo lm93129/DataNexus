@@ -1,9 +1,14 @@
+import logging
 import re
 
 from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
+
+logger = logging.getLogger(__name__)
+
+MAX_RETRY = 2
 
 
 class AuditService:
@@ -78,8 +83,31 @@ class AuditService:
             duration_ms=duration_ms,
             status=status,
         )
-        self.db.add(entry)
-        await self.db.commit()
+        for attempt in range(MAX_RETRY + 1):
+            try:
+                new_entry = AuditLog(
+                    identity_id=identity_id,
+                    identity_type=identity_type,
+                    action=action,
+                    resource=resource,
+                    request_summary=request_summary,
+                    response_summary=response_summary,
+                    ip=ip,
+                    duration_ms=duration_ms,
+                    status=status,
+                ) if attempt > 0 else entry
+                self.db.add(new_entry)
+                await self.db.commit()
+                return
+            except Exception:
+                await self.db.rollback()
+                if attempt < MAX_RETRY:
+                    logger.warning("审计日志写入失败，重试 %s/%s", attempt + 1, MAX_RETRY)
+                else:
+                    logger.error(
+                        "审计日志写入最终失败: action=%s resource=%s",
+                        action, resource, exc_info=True,
+                    )
 
     async def query_logs(
         self,

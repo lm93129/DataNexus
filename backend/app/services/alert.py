@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Date, cast, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -137,7 +137,7 @@ class AlertService:
     async def _check_error_rate(self, rule: AlertRule, config: dict) -> str | None:
         window = config.get("window_minutes", 5)
         threshold = config.get("threshold_percent", 50)
-        since = datetime.now() - timedelta(minutes=window)
+        since = datetime.now(timezone.utc) - timedelta(minutes=window)
 
         total_result = await self.db.execute(
             select(func.count()).select_from(AuditLog)
@@ -163,7 +163,7 @@ class AlertService:
     ) -> str | None:
         window = config.get("window_minutes", 1)
         max_calls = config.get("max_calls", 100)
-        since = datetime.now() - timedelta(minutes=window)
+        since = datetime.now(timezone.utc) - timedelta(minutes=window)
 
         # 按用户检查
         if rule.scope == "user" and rule.target_id:
@@ -197,7 +197,7 @@ class AlertService:
         self, rule: AlertRule, detail: str
     ):
         """创建告警记录（带抑制检查）"""
-        suppress_since = datetime.now() - timedelta(minutes=rule.suppress_minutes)
+        suppress_since = datetime.now(timezone.utc) - timedelta(minutes=rule.suppress_minutes)
         existing = await self.db.execute(
             select(func.count()).select_from(AlertRecord)
             .where(

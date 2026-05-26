@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { login as loginApi, getMe, type LoginParams } from '@/api/auth'
+import { login as loginApi, getMe, type LoginParams, type UserProfile } from '@/api/auth'
 import { getToken, setToken, removeToken } from '@/utils/token'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(getToken())
-  const user = ref<Record<string, unknown> | null>(null)
+  const user = ref<UserProfile | null>(null)
 
   const isLoggedIn = () => !!token.value
 

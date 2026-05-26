@@ -3,6 +3,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import logging
+
 from app.api.deps import get_db
 from app.core.permissions import require_permission
 from app.middleware.rate_limit import limiter
@@ -14,16 +16,18 @@ from app.services.rate_limit import RateLimitService
 from app.services.sql_suggest import SqlSuggestionService
 from app.services.alert import AlertService
 
+logger = logging.getLogger(__name__)
+
 
 class QueryRequest(BaseModel):
     datasource_id: int
-    sql: str
+    sql: str = Field(..., max_length=10000, description="SQL 查询语句")
 
 
 class SuggestRequest(BaseModel):
     datasource_id: int
-    sql: str
-    error_msg: str = Field(default="", description="数据库返回的错误信息")
+    sql: str = Field(..., max_length=10000, description="SQL 查询语句")
+    error_msg: str = Field(default="", max_length=2000, description="数据库返回的错误信息")
 
 
 router = APIRouter(prefix="/query", tags=["数据查询"])
@@ -70,7 +74,7 @@ async def execute_query(
             if suggestions:
                 result["suggestions"] = suggestions
         except Exception:
-            pass
+            logger.exception("生成 SQL 纠错建议失败")
 
     # 记录请求到限流计数器
     await rl_service.record_request(user_id=user.id, datasource_id=body.datasource_id)
@@ -87,6 +91,7 @@ async def execute_query(
             row_count=result.get("row_count"),
         )
     except Exception:
+        logger.exception("保存查询历史失败")
         await db.rollback()
 
     # 审计日志
@@ -114,7 +119,7 @@ async def execute_query(
             datasource_id=body.datasource_id,
         )
     except Exception:
-        pass
+        logger.exception("告警检测失败")
 
     return result
 
@@ -162,7 +167,7 @@ async def export_query_csv(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission("query:execute")),
 ):
-    """执行查询并以 CSV 格式返回结果"""
+    """执行查询并以 CSV 格式流式返回结果"""
     import csv
     import io
 
@@ -192,16 +197,26 @@ async def export_query_csv(
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result.get("error", "查询失败"))
 
-    output = io.StringIO()
-    writer = csv.writer(output)
     columns = result.get("columns", [])
-    writer.writerow(columns)
-    for row in result.get("data", []):
-        writer.writerow([row.get(c, "") for c in columns])
+    data = result.get("data", [])
 
-    output.seek(0)
+    def generate_csv():
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(columns)
+        output.seek(0)
+        yield output.getvalue()
+        output.truncate(0)
+        output.seek(0)
+        for row in data:
+            writer.writerow([v if (v := row.get(c)) is not None else "" for c in columns])
+            output.seek(0)
+            yield output.getvalue()
+            output.truncate(0)
+            output.seek(0)
+
     return StreamingResponse(
-        iter([output.getvalue()]),
+        generate_csv(),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=query_result.csv"},
     )

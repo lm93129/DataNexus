@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import Date, cast, func, select, text
@@ -17,7 +17,7 @@ async def get_dashboard_stats(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
 
     # 数据源总数
     ds_count = await db.execute(select(func.count()).select_from(Datasource))
@@ -77,7 +77,7 @@ async def get_query_trend(
 ):
     results = []
     for i in range(days - 1, -1, -1):
-        day = date.today() - timedelta(days=i)
+        day = datetime.now(timezone.utc).date() - timedelta(days=i)
         count_result = await db.execute(
             select(func.count())
             .select_from(AuditLog)
@@ -98,7 +98,7 @@ async def get_hourly_trend(
     user: User = Depends(get_current_user),
 ):
     """按小时聚合的调用趋势"""
-    since = datetime.now() - timedelta(hours=hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
     result = await db.execute(
         text("""
             SELECT date_trunc('hour', created_at) as hour, count(*) as cnt
@@ -120,7 +120,7 @@ async def get_top_users(
     user: User = Depends(get_current_user),
 ):
     """按用户调用量 Top N"""
-    since = date.today() - timedelta(days=days)
+    since = datetime.now(timezone.utc).date() - timedelta(days=days)
     result = await db.execute(
         text("""
             SELECT a.identity_id, u.name as username, count(*) as cnt
@@ -143,7 +143,7 @@ async def get_top_datasources(
     user: User = Depends(get_current_user),
 ):
     """按数据源调用量 Top N"""
-    since = date.today() - timedelta(days=days)
+    since = datetime.now(timezone.utc).date() - timedelta(days=days)
     result = await db.execute(
         text("""
             SELECT resource, count(*) as cnt
@@ -167,7 +167,7 @@ async def get_slow_queries(
     user: User = Depends(get_current_user),
 ):
     """慢查询排行"""
-    since = date.today() - timedelta(days=days)
+    since = datetime.now(timezone.utc).date() - timedelta(days=days)
     result = await db.execute(
         select(AuditLog)
         .where(
@@ -203,7 +203,7 @@ async def get_error_stats(
     """错误率统计：按天的成功/失败数"""
     results = []
     for i in range(days - 1, -1, -1):
-        day = date.today() - timedelta(days=i)
+        day = datetime.now(timezone.utc).date() - timedelta(days=i)
         total_result = await db.execute(
             select(func.count()).select_from(AuditLog).where(cast(AuditLog.created_at, Date) == day)
         )

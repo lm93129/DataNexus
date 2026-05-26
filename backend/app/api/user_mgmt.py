@@ -1,3 +1,4 @@
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,6 +9,8 @@ from app.api.deps import get_current_user, get_db
 from app.core.permissions import require_permission
 from app.core.security import decrypt_api_key, encrypt_api_key, hash_api_key, hash_password, verify_password
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 from app.schemas.user import ChangePasswordRequest, UserCreate, UserResponse, UserUpdate
 from app.services.audit import AuditService
 
@@ -153,6 +156,7 @@ async def generate_user_api_key(
 
     raw_key = f"dnx_{secrets.token_urlsafe(32)}"
     target.api_key_hash = hash_api_key(raw_key)
+    target.api_key_prefix = raw_key[:8]
     target.api_key_encrypted = encrypt_api_key(raw_key)
     await db.commit()
 
@@ -184,6 +188,7 @@ async def get_user_api_key(
         raw_key = decrypt_api_key(target.api_key_encrypted)
         return {"api_key": raw_key}
     except Exception:
+        logger.warning("解密 API Key 失败: user_id=%s", target.id)
         return {"api_key": None}
 
 
@@ -202,6 +207,7 @@ async def revoke_user_api_key(
         raise HTTPException(status_code=400, detail="该用户未配置 API Key")
 
     target.api_key_hash = None
+    target.api_key_prefix = None
     target.api_key_encrypted = None
     await db.commit()
 

@@ -4,18 +4,18 @@ from pydantic import BaseModel, Field
 
 
 class CustomApiCreate(BaseModel):
-    name: str = Field(..., max_length=100)
-    description: str | None = None
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
     mode: str = Field(..., pattern=r"^(low_code|custom)$")
-    config_json: str
+    config_json: str = Field(..., max_length=50000)
     is_active: bool = True
 
 
 class CustomApiUpdate(BaseModel):
-    name: str | None = Field(None, max_length=100)
-    description: str | None = None
+    name: str | None = Field(None, min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
     mode: str | None = Field(None, pattern=r"^(low_code|custom)$")
-    config_json: str | None = None
+    config_json: str | None = Field(default=None, max_length=50000)
     is_active: bool | None = None
 
 

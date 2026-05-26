@@ -91,7 +91,7 @@ async def sync_metadata(
         password = ds_service.get_password(ds)
         engine = await pool_manager.get_engine(ds, password)
         meta_service = MetadataService(db)
-        await meta_service.sync_from_source(datasource_id, engine)
+        await meta_service.sync_from_source(datasource_id, engine, ds_type=ds.type)
         tables = await meta_service.get_tables(datasource_id)
 
         audit = AuditService(db)

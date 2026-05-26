@@ -18,7 +18,10 @@ from app.core.permissions import _has_permission
 mcp_server = Server("datanexus")
 
 # 存储当前 SSE 连接的认证用户信息，由 transport.py 在鉴权后设置
-mcp_user_context: ContextVar[dict] = ContextVar("mcp_user_context", default={"user_id": 0, "username": "anonymous", "role": "viewer", "identity_type": "user"})
+mcp_user_context: ContextVar[dict] = ContextVar("mcp_user_context")
+
+# 默认上下文（未认证时的 fallback）
+_DEFAULT_MCP_CONTEXT = {"user_id": 0, "username": "anonymous", "role": "viewer", "identity_type": "user"}
 
 # MCP 工具名 -> 所需权限映射
 TOOL_PERMISSION_MAP: dict[str, str] = {
@@ -78,7 +81,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     from app.services.audit import AuditService
 
     # 从 ContextVar 获取当前连接的认证用户身份
-    user_ctx = mcp_user_context.get()
+    user_ctx = mcp_user_context.get(_DEFAULT_MCP_CONTEXT)
     identity_id = user_ctx["user_id"]
     role = user_ctx["role"]
     identity_type = f"mcp_{user_ctx['identity_type']}"
@@ -213,13 +216,7 @@ async def _handle_query(
 
 
 async def _handle_custom_api(db, arguments: dict) -> list[TextContent]:
-    """调用预注册的自定义 API
-
-    根据 mode 分发：
-    - low_code: 使用精细执行引擎（参数路由、认证注入、响应提取）
-    - custom: 保持原有简单转发逻辑
-    """
-    import httpx
+    """调用预注册的自定义 API，复用 CustomApiService 逻辑"""
     from sqlalchemy import select
 
     from app.models.custom_api import CustomApi
@@ -228,7 +225,7 @@ async def _handle_custom_api(db, arguments: dict) -> list[TextContent]:
     api_name = arguments.get("api_name")
     params = arguments.get("params", {})
 
-    # 查询已启用的 API 配置
+    # 查询已启用的 API
     result = await db.execute(
         select(CustomApi).where(
             CustomApi.name == api_name,
@@ -239,35 +236,13 @@ async def _handle_custom_api(db, arguments: dict) -> list[TextContent]:
     if not api:
         return [TextContent(type="text", text=f"API '{api_name}' 不存在或未启用")]
 
-    config = json.loads(api.config_json)
+    # 统一通过 service 层执行（low_code 和 custom 模式均由 test_call 处理）
+    service = CustomApiService(db)
+    call_result = await service.test_call(api.id, params)
 
-    # low_code 模式使用精细执行引擎
-    if api.mode == "low_code":
-        service = CustomApiService(db)
-        call_result = await service._execute_low_code(config, params)
-        if call_result.get("success"):
-            data = call_result.get("data", "")
-            text = json.dumps(data, ensure_ascii=False, default=str) if not isinstance(data, str) else data
-            return [TextContent(type="text", text=text[:5000])]
-        else:
-            return [TextContent(type="text", text=f"API调用失败: {call_result.get('message', '')}")]
-
-    # custom 模式保持原有逻辑
-    url = config.get("url", "")
-    method = config.get("method", "GET").upper()
-    headers = config.get("headers", {})
-
-    # SSRF 防护：阻止访问内网地址
-    from app.services.custom_api import _is_ssrf_target
-    if _is_ssrf_target(url):
-        return [TextContent(type="text", text="API调用失败: 目标地址不允许访问（SSRF防护）")]
-
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            if method == "GET":
-                resp = await client.get(url, params=params, headers=headers)
-            else:
-                resp = await client.request(method, url, json=params, headers=headers)
-            return [TextContent(type="text", text=resp.text[:5000])]
-    except Exception as e:
-        return [TextContent(type="text", text=f"API调用失败: {str(e)}")]
+    if call_result.get("success"):
+        data = call_result.get("data") or call_result.get("body_preview", "")
+        text = json.dumps(data, ensure_ascii=False, default=str) if not isinstance(data, str) else data
+        return [TextContent(type="text", text=text[:5000])]
+    else:
+        return [TextContent(type="text", text=f"API调用失败: {call_result.get('message', '')}")]
