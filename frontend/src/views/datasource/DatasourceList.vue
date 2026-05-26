@@ -24,7 +24,7 @@ const loading = ref(false)
 
 const columns = [
   { title: '名称', key: 'name' },
-  { title: '类型', key: 'type', render: (row: Datasource) => h(NTag, { type: 'info' }, () => row.type.toUpperCase()) },
+  { title: '类型', key: 'type', render: (row: Datasource) => h(NTag, { type: 'info' }, () => ({ mysql: 'MySQL', postgresql: 'PostgreSQL', mssql: 'SQL Server', oracle: 'Oracle' }[row.type] || row.type)) },
   { title: '主机', key: 'host' },
   { title: '端口', key: 'port' },
   { title: '数据库', key: 'database' },

@@ -19,7 +19,11 @@ class RateLimit(Base, TimestampMixin):
     __tablename__ = "rate_limits"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    identity_id: Mapped[int] = mapped_column(Integer)
-    max_qps: Mapped[int] = mapped_column(Integer, default=10)
-    max_daily_calls: Mapped[int] = mapped_column(Integer, default=10000)
-    max_rows_per_query: Mapped[int] = mapped_column(Integer, default=1000)
+    name: Mapped[str] = mapped_column(String(100))
+    scope: Mapped[str] = mapped_column(String(20), default="global")  # global/user/datasource/api
+    target_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 对应 scope 的具体 ID
+    max_per_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_per_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_per_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_rows_per_query: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)

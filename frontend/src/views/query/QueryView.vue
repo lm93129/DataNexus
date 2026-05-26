@@ -33,6 +33,32 @@
           />
         </n-card>
         <n-alert v-if="error" type="error" :title="error" />
+        <!-- SQL 智能纠错建议 -->
+        <n-card v-if="suggestions.length" title="智能纠错建议" size="small">
+          <n-space vertical :size="8">
+            <div v-for="(s, idx) in suggestions" :key="idx">
+              <n-space align="center" :size="8">
+                <n-tag :type="s.type === 'syntax' ? 'warning' : 'info'" size="small">
+                  {{ s.type === 'syntax' ? '语法' : s.type === 'table' ? '表名' : '字段' }}
+                </n-tag>
+                <n-text>{{ s.message }}</n-text>
+              </n-space>
+              <n-space v-if="s.candidates && s.candidates.length" :size="8" style="margin-top: 4px; margin-left: 56px">
+                <n-text depth="3" style="font-size: 12px">是否指:</n-text>
+                <n-button
+                  v-for="c in s.candidates"
+                  :key="c"
+                  size="tiny"
+                  type="primary"
+                  secondary
+                  @click="applySuggestion(s, c)"
+                >
+                  {{ c }}
+                </n-button>
+              </n-space>
+            </div>
+          </n-space>
+        </n-card>
       </n-space>
     </n-layout-content>
 
@@ -75,7 +101,7 @@
 import { ref, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import SqlEditor from '@/components/SqlEditor.vue'
-import { executeQuery, getQueryHistory, deleteQueryHistory, exportQueryCsv, type QueryResult, type QueryHistoryItem } from '@/api/query'
+import { executeQuery, getQueryHistory, deleteQueryHistory, exportQueryCsv, type QueryResult, type QueryHistoryItem, type SqlSuggestion } from '@/api/query'
 import { listDatasources } from '@/api/datasource'
 
 const message = useMessage()
@@ -86,6 +112,7 @@ const sql = ref('SELECT 1')
 const executing = ref(false)
 const result = ref<QueryResult | null>(null)
 const error = ref('')
+const suggestions = ref<SqlSuggestion[]>([])
 const showHistory = ref(false)
 const history = ref<QueryHistoryItem[]>([])
 
@@ -96,10 +123,14 @@ async function handleExecute() {
   executing.value = true
   error.value = ''
   result.value = null
+  suggestions.value = []
   try {
     const res = await executeQuery({ datasource_id: datasourceId.value, sql: sql.value })
     if (!res.success) {
       error.value = res.error || '查询执行失败'
+      if (res.suggestions && res.suggestions.length) {
+        suggestions.value = res.suggestions
+      }
       return
     }
     result.value = res
@@ -125,6 +156,15 @@ async function handleExport() {
     message.success('导出成功')
   } catch {
     message.error('导出失败')
+  }
+}
+
+function applySuggestion(s: SqlSuggestion, candidate: string) {
+  if (s.original) {
+    // 替换 SQL 中的错误名称为建议的正确名称
+    const regex = new RegExp(`\\b${s.original}\\b`, 'gi')
+    sql.value = sql.value.replace(regex, candidate)
+    message.info(`已替换 "${s.original}" → "${candidate}"`)
   }
 }
 

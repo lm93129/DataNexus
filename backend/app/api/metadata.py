@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -11,6 +12,10 @@ from app.services.datasource import DatasourceService
 from app.services.metadata import MetadataService
 
 router = APIRouter(prefix="/metadata", tags=["元数据"])
+
+
+class UpdateCommentRequest(BaseModel):
+    comment: str = ""
 
 
 @router.get("/tables/{datasource_id}")
@@ -105,3 +110,37 @@ async def search_metadata(
             for c in result["columns"]
         ],
     }
+
+
+@router.put("/tables/{table_id}/comment")
+@limiter.limit("30/minute")
+async def update_table_comment(
+    request: Request,
+    table_id: int,
+    body: UpdateCommentRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("metadata:read")),
+):
+    """更新表的业务注释"""
+    service = MetadataService(db)
+    table = await service.update_table_comment(table_id, body.comment)
+    if not table:
+        raise HTTPException(status_code=404, detail="表不存在")
+    return {"id": table.id, "table_name": table.table_name, "table_comment": table.table_comment}
+
+
+@router.put("/columns/{column_id}/comment")
+@limiter.limit("30/minute")
+async def update_column_comment(
+    request: Request,
+    column_id: int,
+    body: UpdateCommentRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("metadata:read")),
+):
+    """更新字段的业务注释"""
+    service = MetadataService(db)
+    column = await service.update_column_comment(column_id, body.comment)
+    if not column:
+        raise HTTPException(status_code=404, detail="字段不存在")
+    return {"id": column.id, "column_name": column.column_name, "column_comment": column.column_comment}

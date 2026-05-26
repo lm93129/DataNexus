@@ -17,3 +17,6 @@ class Datasource(Base, TimestampMixin):
     encrypted_password: Mapped[str] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 黑名单：JSON 数组字符串，如 ["sys_*", "tmp_*"]
+    table_blacklist: Mapped[str | None] = mapped_column(Text, nullable=True, default="[]")
+    column_blacklist: Mapped[str | None] = mapped_column(Text, nullable=True, default="[]")

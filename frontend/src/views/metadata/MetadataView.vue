@@ -51,21 +51,19 @@
     <n-grid :cols="2" :x-gap="16">
       <n-gi>
         <n-card title="表列表">
-          <n-list hoverable clickable>
-            <n-list-item
-              v-for="table in tables"
-              :key="table.id"
-              @click="handleTableClick(table)"
-            >
-              <n-thing :title="table.table_name" :description="table.table_comment || ''" />
-            </n-list-item>
-          </n-list>
+          <n-data-table
+            :columns="tableColumns"
+            :data="tables"
+            :row-props="tableRowProps"
+            size="small"
+            :max-height="500"
+          />
           <n-empty v-if="!tables.length" description="暂无数据" />
         </n-card>
       </n-gi>
       <n-gi>
         <n-card :title="selectedTableName ? `表结构: ${selectedTableName}` : '列信息'">
-          <n-data-table v-if="columns.length" :columns="colColumns" :data="columns" size="small" />
+          <n-data-table v-if="columns.length" :columns="colColumns" :data="columns" size="small" :max-height="500" />
           <n-empty v-else description="请选择一张表" />
         </n-card>
       </n-gi>
@@ -75,33 +73,138 @@
 
 <script setup lang="ts">
 import { ref, h, onMounted } from 'vue'
-import { NTag, useMessage } from 'naive-ui'
+import { NTag, NInput, NButton, NSpace, useMessage } from 'naive-ui'
 import { listDatasources } from '@/api/datasource'
-import { getTables, getColumns, syncMetadata, searchMetadata, type TableMeta, type ColumnMeta, type SearchResult } from '@/api/metadata'
+import {
+  getTables, getColumns, syncMetadata, searchMetadata,
+  updateTableComment, updateColumnComment,
+  type TableMeta, type ColumnMeta, type SearchResult,
+} from '@/api/metadata'
 
 const message = useMessage()
 const selectedDs = ref<number | null>(null)
 const dsOptions = ref<{ label: string; value: number }[]>([])
 const tables = ref<TableMeta[]>([])
 const selectedTableName = ref('')
+const selectedTableId = ref<number | null>(null)
 const columns = ref<ColumnMeta[]>([])
 const syncing = ref(false)
 const searchKeyword = ref('')
 const searchResults = ref<SearchResult | null>(null)
 
+// 内联编辑状态
+const editingTableId = ref<number | null>(null)
+const editingTableComment = ref('')
+const editingColumnId = ref<number | null>(null)
+const editingColumnComment = ref('')
+
+// 表列表列定义（含可编辑注释）
+const tableColumns = [
+  { title: '表名', key: 'table_name', width: 180 },
+  {
+    title: '注释',
+    key: 'table_comment',
+    render: (row: TableMeta) => {
+      if (editingTableId.value === row.id) {
+        return h(NSpace, { size: 4, align: 'center' }, () => [
+          h(NInput, {
+            value: editingTableComment.value,
+            size: 'small',
+            placeholder: '输入注释',
+            style: 'width: 140px',
+            onUpdateValue: (v: string) => { editingTableComment.value = v },
+            onKeyup: (e: KeyboardEvent) => { if (e.key === 'Enter') saveTableComment(row) },
+          }),
+          h(NButton, { size: 'tiny', type: 'primary', onClick: () => saveTableComment(row) }, () => '保存'),
+          h(NButton, { size: 'tiny', onClick: () => { editingTableId.value = null } }, () => '取消'),
+        ])
+      }
+      return h('span', {
+        style: 'cursor: pointer; color: #666; min-width: 60px; display: inline-block',
+        onClick: (e: Event) => { e.stopPropagation(); startEditTable(row) },
+      }, row.table_comment || '点击编辑')
+    },
+  },
+]
+
+// 字段列定义（含可编辑注释）
 const colColumns = [
-  { title: '列名', key: 'column_name' },
-  { title: '类型', key: 'data_type' },
+  { title: '列名', key: 'column_name', width: 140 },
+  { title: '类型', key: 'data_type', width: 100 },
   {
     title: '主键',
     key: 'is_primary_key',
+    width: 60,
     render: (row: ColumnMeta) => row.is_primary_key ? h(NTag, { type: 'success', size: 'small' }, () => 'PK') : '',
   },
-  { title: '备注', key: 'column_comment' },
+  {
+    title: '注释',
+    key: 'column_comment',
+    render: (row: ColumnMeta) => {
+      if (editingColumnId.value === row.id) {
+        return h(NSpace, { size: 4, align: 'center' }, () => [
+          h(NInput, {
+            value: editingColumnComment.value,
+            size: 'small',
+            placeholder: '输入注释',
+            style: 'width: 120px',
+            onUpdateValue: (v: string) => { editingColumnComment.value = v },
+            onKeyup: (e: KeyboardEvent) => { if (e.key === 'Enter') saveColumnComment(row) },
+          }),
+          h(NButton, { size: 'tiny', type: 'primary', onClick: () => saveColumnComment(row) }, () => '保存'),
+          h(NButton, { size: 'tiny', onClick: () => { editingColumnId.value = null } }, () => '取消'),
+        ])
+      }
+      return h('span', {
+        style: 'cursor: pointer; color: #666; min-width: 60px; display: inline-block',
+        onClick: () => startEditColumn(row),
+      }, row.column_comment || '点击编辑')
+    },
+  },
 ]
+
+function tableRowProps(row: TableMeta) {
+  return {
+    style: 'cursor: pointer',
+    onClick: () => handleTableClick(row),
+  }
+}
+
+function startEditTable(table: TableMeta) {
+  editingTableId.value = table.id
+  editingTableComment.value = table.table_comment || ''
+}
+
+async function saveTableComment(table: TableMeta) {
+  try {
+    await updateTableComment(table.id, editingTableComment.value)
+    table.table_comment = editingTableComment.value
+    editingTableId.value = null
+    message.success('注释已更新')
+  } catch {
+    message.error('更新失败')
+  }
+}
+
+function startEditColumn(col: ColumnMeta) {
+  editingColumnId.value = col.id
+  editingColumnComment.value = col.column_comment || ''
+}
+
+async function saveColumnComment(col: ColumnMeta) {
+  try {
+    await updateColumnComment(col.id, editingColumnComment.value)
+    col.column_comment = editingColumnComment.value
+    editingColumnId.value = null
+    message.success('注释已更新')
+  } catch {
+    message.error('更新失败')
+  }
+}
 
 async function handleDsChange(id: number) {
   selectedTableName.value = ''
+  selectedTableId.value = null
   columns.value = []
   try {
     tables.value = await getTables(id)
@@ -126,6 +229,7 @@ async function handleSync() {
 
 async function handleTableClick(table: TableMeta) {
   selectedTableName.value = table.table_name
+  selectedTableId.value = table.id
   try {
     columns.value = await getColumns(table.id)
   } catch {

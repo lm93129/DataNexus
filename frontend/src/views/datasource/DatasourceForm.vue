@@ -25,6 +25,18 @@
       <n-form-item label="描述">
         <n-input v-model:value="formData.description" type="textarea" placeholder="可选描述" />
       </n-form-item>
+      <n-form-item label="表黑名单">
+        <n-dynamic-tags v-model:value="tableBlacklist" />
+        <template #feedback>
+          <n-text depth="3" style="font-size: 12px">支持通配符，如 sys_*、tmp_*，匹配的表不对外暴露</n-text>
+        </template>
+      </n-form-item>
+      <n-form-item label="字段黑名单">
+        <n-dynamic-tags v-model:value="columnBlacklist" />
+        <template #feedback>
+          <n-text depth="3" style="font-size: 12px">匹配的字段名不对外暴露，如 password、secret_*</n-text>
+        </template>
+      </n-form-item>
       <n-space>
         <n-button type="primary" :loading="submitting" @click="handleSubmit">保存</n-button>
         <n-button @click="router.back()">取消</n-button>
@@ -58,10 +70,13 @@ const formData = ref({
   description: '',
 })
 
+const tableBlacklist = ref<string[]>([])
+const columnBlacklist = ref<string[]>([])
+
 const typeOptions = [
   { label: 'MySQL', value: 'mysql' },
   { label: 'PostgreSQL', value: 'postgresql' },
-  { label: 'SQL Server', value: 'sqlserver' },
+  { label: 'SQL Server', value: 'mssql' },
   { label: 'Oracle', value: 'oracle' },
 ]
 
@@ -82,13 +97,17 @@ async function handleSubmit() {
   }
   submitting.value = true
   try {
+    const payload: any = {
+      ...formData.value,
+      table_blacklist: JSON.stringify(tableBlacklist.value),
+      column_blacklist: JSON.stringify(columnBlacklist.value),
+    }
     if (isEdit.value) {
-      const payload = { ...formData.value }
-      if (!payload.password) delete (payload as any).password
-      await updateDatasource(Number(route.params.id), payload as any)
+      if (!payload.password) delete payload.password
+      await updateDatasource(Number(route.params.id), payload)
       message.success('更新成功')
     } else {
-      await createDatasource(formData.value as any)
+      await createDatasource(payload)
       message.success('创建成功')
     }
     router.push('/datasource')
@@ -103,6 +122,8 @@ onMounted(async () => {
   if (isEdit.value) {
     const data = await getDatasource(Number(route.params.id))
     formData.value = { ...data, password: '', description: data.description || '' } as any
+    try { tableBlacklist.value = JSON.parse((data as any).table_blacklist || '[]') } catch { tableBlacklist.value = [] }
+    try { columnBlacklist.value = JSON.parse((data as any).column_blacklist || '[]') } catch { columnBlacklist.value = [] }
   }
 })
 </script>

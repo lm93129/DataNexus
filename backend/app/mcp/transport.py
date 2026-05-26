@@ -13,7 +13,7 @@ from mcp.server.sse import SseServerTransport
 from starlette.requests import Request
 from starlette.routing import Mount, Route
 
-from app.mcp.server import mcp_server
+from app.mcp.server import mcp_server, mcp_user_context
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,9 @@ async def handle_sse(request: Request):
 
     流程：
     1. 鉴权：验证 Bearer Token 或 X-API-Key
-    2. 建立 SSE 流
-    3. 运行 MCP server（阻塞直到连接断开）
+    2. 将用户身份写入 ContextVar
+    3. 建立 SSE 流
+    4. 运行 MCP server（阻塞直到连接断开）
     """
     from app.core.database import async_session_factory
     from app.mcp.auth import authenticate_mcp_request
@@ -36,6 +37,9 @@ async def handle_sse(request: Request):
     async with async_session_factory() as db:
         user = await authenticate_mcp_request(request, db)
         logger.info("MCP SSE 连接已鉴权，用户 ID: %s", user.id)
+
+    # 将认证用户信息写入上下文，供 call_tool 使用
+    mcp_user_context.set({"user_id": user.id, "username": user.username, "role": user.role})
 
     # 建立 SSE 流并运行 MCP server
     async with sse_transport.connect_sse(

@@ -5,6 +5,14 @@ export interface QueryParams {
   sql: string
 }
 
+export interface SqlSuggestion {
+  type: 'syntax' | 'table' | 'column'
+  message: string
+  position?: number | null
+  candidates?: string[]
+  original?: string
+}
+
 export interface QueryResult {
   success: boolean
   columns: string[]
@@ -12,6 +20,7 @@ export interface QueryResult {
   row_count: number
   duration_ms: number
   error?: string
+  suggestions?: SqlSuggestion[]
 }
 
 export interface QueryHistoryItem {
@@ -26,6 +35,10 @@ export interface QueryHistoryItem {
 
 export function executeQuery(data: QueryParams): Promise<QueryResult> {
   return request.post('/query/execute', data)
+}
+
+export function getSqlSuggestions(data: { datasource_id: number; sql: string; error_msg?: string }): Promise<{ suggestions: SqlSuggestion[] }> {
+  return request.post('/query/suggest', data)
 }
 
 export function getQueryHistory(): Promise<QueryHistoryItem[]> {

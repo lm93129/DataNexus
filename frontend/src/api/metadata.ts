@@ -37,3 +37,11 @@ export function searchMetadata(keyword: string, datasourceId?: number): Promise<
   if (datasourceId) params.datasource_id = datasourceId
   return request.get('/metadata/search', { params })
 }
+
+export function updateTableComment(tableId: number, comment: string): Promise<{ id: number; table_name: string; table_comment: string }> {
+  return request.put(`/metadata/tables/${tableId}/comment`, { comment })
+}
+
+export function updateColumnComment(columnId: number, comment: string): Promise<{ id: number; column_name: string; column_comment: string }> {
+  return request.put(`/metadata/columns/${columnId}/comment`, { comment })
+}

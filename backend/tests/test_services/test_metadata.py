@@ -6,6 +6,7 @@ from app.services.metadata import MetadataService
 @pytest.mark.asyncio
 async def test_get_tables_filters_blocked():
     mock_db = AsyncMock()
+    mock_db.get = AsyncMock(return_value=None)
     service = MetadataService(mock_db)
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = [
@@ -22,6 +23,7 @@ async def test_get_tables_filters_blocked():
 @pytest.mark.asyncio
 async def test_get_columns_filters_blocked():
     mock_db = AsyncMock()
+    mock_db.get = AsyncMock(return_value=None)
     service = MetadataService(mock_db)
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = [

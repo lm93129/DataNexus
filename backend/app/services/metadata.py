@@ -1,28 +1,61 @@
+import fnmatch
+import json
+
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from app.models.datasource import Datasource
 from app.models.metadata import ColumnMetadata, TableMetadata
+
+
+def _matches_blacklist(name: str, patterns: list[str]) -> bool:
+    """检查名称是否匹配黑名单中的任一模式（支持通配符）"""
+    for pattern in patterns:
+        if fnmatch.fnmatch(name, pattern):
+            return True
+    return False
 
 
 class MetadataService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def _get_blacklists(self, datasource_id: int) -> tuple[list[str], list[str]]:
+        """获取数据源的表黑名单和字段黑名单"""
+        ds = await self.db.get(Datasource, datasource_id)
+        if not ds:
+            return [], []
+        table_bl = json.loads(ds.table_blacklist or "[]")
+        column_bl = json.loads(ds.column_blacklist or "[]")
+        return table_bl, column_bl
+
     async def get_tables(self, datasource_id: int) -> list[TableMetadata]:
+        table_bl, _ = await self._get_blacklists(datasource_id)
         stmt = select(TableMetadata).where(
             TableMetadata.datasource_id == datasource_id,
             TableMetadata.is_blocked == False,
         )
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        tables = list(result.scalars().all())
+        if table_bl:
+            tables = [t for t in tables if not _matches_blacklist(t.table_name, table_bl)]
+        return tables
 
     async def get_columns(self, table_metadata_id: int) -> list[ColumnMetadata]:
+        # 获取表所属数据源的字段黑名单
+        table = await self.db.get(TableMetadata, table_metadata_id)
+        column_bl: list[str] = []
+        if table:
+            _, column_bl = await self._get_blacklists(table.datasource_id)
         stmt = select(ColumnMetadata).where(
             ColumnMetadata.table_metadata_id == table_metadata_id,
             ColumnMetadata.is_blocked == False,
         )
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        columns = list(result.scalars().all())
+        if column_bl:
+            columns = [c for c in columns if not _matches_blacklist(c.column_name, column_bl)]
+        return columns
 
     async def get_table_by_name(self, datasource_id: int, table_name: str) -> TableMetadata | None:
         stmt = select(TableMetadata).where(
@@ -32,6 +65,26 @@ class MetadataService:
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def update_table_comment(self, table_id: int, comment: str) -> TableMetadata | None:
+        """更新表的业务注释"""
+        table = await self.db.get(TableMetadata, table_id)
+        if not table:
+            return None
+        table.table_comment = comment
+        await self.db.commit()
+        await self.db.refresh(table)
+        return table
+
+    async def update_column_comment(self, column_id: int, comment: str) -> ColumnMetadata | None:
+        """更新字段的业务注释"""
+        column = await self.db.get(ColumnMetadata, column_id)
+        if not column:
+            return None
+        column.column_comment = comment
+        await self.db.commit()
+        await self.db.refresh(column)
+        return column
 
     async def search(self, keyword: str, datasource_id: int | None = None, limit: int = 50) -> dict:
         """搜索表名和列名，返回匹配结果"""

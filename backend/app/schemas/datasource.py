@@ -10,6 +10,8 @@ class DatasourceCreate(BaseModel):
     username: str
     password: str
     description: str | None = None
+    table_blacklist: str | None = "[]"
+    column_blacklist: str | None = "[]"
 
 
 class DatasourceUpdate(BaseModel):
@@ -21,6 +23,8 @@ class DatasourceUpdate(BaseModel):
     password: str | None = None
     is_active: bool | None = None
     description: str | None = None
+    table_blacklist: str | None = None
+    column_blacklist: str | None = None
 
 
 class DatasourceResponse(BaseModel):
@@ -33,5 +37,7 @@ class DatasourceResponse(BaseModel):
     username: str
     is_active: bool
     description: str | None = None
+    table_blacklist: str | None = "[]"
+    column_blacklist: str | None = "[]"
 
     model_config = {"from_attributes": True}

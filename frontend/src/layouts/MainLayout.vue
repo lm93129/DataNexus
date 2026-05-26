@@ -46,6 +46,7 @@ import {
   SettingsOutline,
   ShieldCheckmarkOutline,
   CodeSlashOutline,
+  NotificationsOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
@@ -67,6 +68,7 @@ const menuOptions = [
   { label: '脱敏规则', key: 'Desensitize', icon: renderIcon(ShieldCheckmarkOutline) },
   { label: '自定义API', key: 'CustomApi', icon: renderIcon(CodeSlashOutline) },
   { label: '审计日志', key: 'Audit', icon: renderIcon(DocumentTextOutline) },
+  { label: '异常告警', key: 'Alert', icon: renderIcon(NotificationsOutline) },
   { label: '系统设置', key: 'Settings', icon: renderIcon(SettingsOutline) },
 ]
 

@@ -10,6 +10,8 @@ export interface Datasource {
   username: string
   description?: string
   is_active: boolean
+  table_blacklist?: string
+  column_blacklist?: string
   created_at: string
 }
 
@@ -22,6 +24,8 @@ export interface DatasourceCreate {
   username: string
   password: string
   description?: string
+  table_blacklist?: string
+  column_blacklist?: string
 }
 
 export function listDatasources(): Promise<Datasource[]> {

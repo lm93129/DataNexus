@@ -8,11 +8,15 @@
 每次工具调用均写入审计日志。
 """
 import json
+from contextvars import ContextVar
 
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
 mcp_server = Server("datanexus")
+
+# 存储当前 SSE 连接的认证用户信息，由 transport.py 在鉴权后设置
+mcp_user_context: ContextVar[dict] = ContextVar("mcp_user_context", default={"user_id": 0, "username": "anonymous", "role": "viewer"})
 
 
 @mcp_server.list_tools()
@@ -64,10 +68,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     from app.core.database import async_session_factory
     from app.services.audit import AuditService
 
-    async with async_session_factory() as db:
-        # MCP 上下文身份传递待完善，暂用 0 占位
-        identity_id = 0
+    # 从 ContextVar 获取当前连接的认证用户身份
+    user_ctx = mcp_user_context.get()
+    identity_id = user_ctx["user_id"]
 
+    async with async_session_factory() as db:
         result = await _dispatch_tool(db, name, arguments, identity_id)
 
         # 判断调用是否成功（结果文本中含"失败"则视为 error）
@@ -139,6 +144,15 @@ async def _handle_query(
 ) -> list[TextContent]:
     """处理 query_database 工具调用"""
     from app.services.query import QueryService
+    from app.services.rate_limit import RateLimitService
+
+    # 动态限流检查
+    rl_service = RateLimitService(db)
+    deny_reason = await rl_service.check_rate_limit(
+        user_id=identity_id, datasource_id=arguments.get("datasource_id")
+    )
+    if deny_reason:
+        return [TextContent(type="text", text=f"请求被限流: {deny_reason}")]
 
     service = QueryService(db)
     result = await service.execute_query(
@@ -146,6 +160,12 @@ async def _handle_query(
         sql=arguments["sql"],
         identity_id=identity_id,
     )
+
+    # 记录请求
+    await rl_service.record_request(
+        user_id=identity_id, datasource_id=arguments.get("datasource_id")
+    )
+
     if not result["success"]:
         return [TextContent(type="text", text=f"查询失败: {result['error']}")]
     return [
@@ -200,6 +220,11 @@ async def _handle_custom_api(db, arguments: dict) -> list[TextContent]:
     url = config.get("url", "")
     method = config.get("method", "GET").upper()
     headers = config.get("headers", {})
+
+    # SSRF 防护：阻止访问内网地址
+    from app.services.custom_api import _is_ssrf_target
+    if _is_ssrf_target(url):
+        return [TextContent(type="text", text="API调用失败: 目标地址不允许访问（SSRF防护）")]
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
