@@ -126,8 +126,12 @@ class AlertService:
         elif rule.rule_type == "slow_query":
             return self._check_slow_query(config, duration_ms)
         elif rule.rule_type == "connection_fail":
-            if status == "error" and "connection" in action.lower():
-                return f"数据源连接失败"
+            # 连接失败：查询失败或连接测试失败或显式连接动作失败
+            if status == "error" and (
+                "connection" in action.lower()
+                or action in ("query_database", "mcp_call:query_database", "datasource_test")
+            ):
+                return f"数据源连接/查询失败（action={action}）"
         return None
 
     async def _check_error_rate(self, rule: AlertRule, config: dict) -> str | None:

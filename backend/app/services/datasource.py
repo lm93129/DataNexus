@@ -49,10 +49,12 @@ class DatasourceService:
         ds = await self.get_by_id(ds_id)
         if not ds:
             return None
+        # 先检测是否有连接相关字段变更（含 password），再转换
+        need_pool_reset = bool(CONNECTION_FIELDS & set(data.keys()))
         if "password" in data:
             data["encrypted_password"] = self._encrypt(data.pop("password"))
         # 连接信息变更时清理旧连接池
-        if CONNECTION_FIELDS & set(data.keys()):
+        if need_pool_reset:
             await pool_manager.remove_engine(ds_id)
         for key, value in data.items():
             if value is not None:

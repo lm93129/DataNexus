@@ -67,6 +67,16 @@ const router = createRouter({
           component: () => import('@/views/alert/AlertView.vue'),
         },
         {
+          path: 'ratelimit',
+          name: 'RateLimit',
+          component: () => import('@/views/ratelimit/RateLimitView.vue'),
+        },
+        {
+          path: 'permissions',
+          name: 'Permissions',
+          component: () => import('@/views/permissions/PermissionsView.vue'),
+        },
+        {
           path: 'settings',
           name: 'Settings',
           component: () => import('@/views/settings/SettingsView.vue'),

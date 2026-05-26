@@ -4,7 +4,8 @@ RBAC 权限核心模块
 权限矩阵定义各角色可执行的操作，格式为 "resource:action"。
 通配符 "*" 表示该资源下的所有操作。
 """
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User, UserRoleEnum
 
@@ -18,11 +19,12 @@ PERMISSION_MATRIX: dict[str, list[str]] = {
         "user:*",
         "desensitize:*",
         "custom_api:*",
+        "alert:*",
     ],
     UserRoleEnum.analyst.value: [
         "query:execute",
         "metadata:read",
-        "audit:read",
+        "audit:read_own",
         "datasource:read",
         "desensitize:read",
         "custom_api:read",
@@ -64,8 +66,25 @@ def require_permission(permission: str):
     """
     from app.api.deps import get_current_user
 
-    async def dependency(current_user: User = Depends(get_current_user)):
+    async def dependency(
+        request: Request,
+        current_user: User = Depends(get_current_user),
+    ):
         if not _has_permission(current_user.role, permission):
+            # 权限拒绝写审计日志
+            from app.core.database import async_session_factory
+            from app.services.audit import AuditService
+            async with async_session_factory() as db:
+                audit = AuditService(db)
+                await audit.log(
+                    identity_id=current_user.id,
+                    identity_type="user",
+                    action="permission_denied",
+                    resource=permission,
+                    request_summary=f"{request.method} {request.url.path}",
+                    ip=request.client.host if request.client else None,
+                    status="denied",
+                )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"权限不足：需要 {permission}",

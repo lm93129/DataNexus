@@ -47,6 +47,8 @@ import {
   ShieldCheckmarkOutline,
   CodeSlashOutline,
   NotificationsOutline,
+  LockClosedOutline,
+  SpeedometerOutline,
 } from '@vicons/ionicons5'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
@@ -69,6 +71,8 @@ const menuOptions = [
   { label: '自定义API', key: 'CustomApi', icon: renderIcon(CodeSlashOutline) },
   { label: '审计日志', key: 'Audit', icon: renderIcon(DocumentTextOutline) },
   { label: '异常告警', key: 'Alert', icon: renderIcon(NotificationsOutline) },
+  { label: '限流策略', key: 'RateLimit', icon: renderIcon(SpeedometerOutline) },
+  { label: '权限管理', key: 'Permissions', icon: renderIcon(LockClosedOutline) },
   { label: '系统设置', key: 'Settings', icon: renderIcon(SettingsOutline) },
 ]
 

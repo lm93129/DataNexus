@@ -69,6 +69,10 @@ class SqlRiskControl:
         if depth > 3:
             return ValidationResult(is_safe=False, reason="子查询嵌套超过3层")
 
+        # 检查无 WHERE 条件的 SELECT *（全表扫描防护）
+        if self._is_unfiltered_select_star(stmt):
+            return ValidationResult(is_safe=False, reason="禁止无条件全表扫描：SELECT * 必须包含 WHERE 条件")
+
         return ValidationResult(is_safe=True)
 
     def apply_row_limit(self, sql: str, max_rows: int | None = None, dialect: str | None = None) -> str:
@@ -105,6 +109,48 @@ class SqlRiskControl:
             else:
                 max_depth = max(max_depth, self._subquery_depth(child, current))
         return max_depth
+
+    def _is_unfiltered_select_star(self, stmt) -> bool:
+        """检测无 WHERE 条件的 SELECT *（仅针对直接查询真实表的情况）"""
+        # UNION 查询检查每个子 SELECT
+        if isinstance(stmt, exp.Union):
+            for select_node in stmt.find_all(exp.Select):
+                if self._is_unfiltered_select_star(select_node):
+                    return True
+            return False
+
+        if not isinstance(stmt, exp.Select):
+            return False
+
+        # 检查是否为 SELECT *（存在 Star 节点）
+        has_star = any(isinstance(expr, exp.Star) for expr in stmt.expressions)
+        if not has_star:
+            return False
+
+        # 检查 FROM 子句是否直接引用真实表（非子查询/派生表）
+        from_clause = stmt.find(exp.From)
+        if not from_clause:
+            return False
+
+        # 如果 FROM 后面全是子查询/派生表，则不算全表扫描
+        has_real_table = False
+        for table_node in from_clause.find_all(exp.Table):
+            # 排除子查询内部的表引用
+            parent_subquery = table_node.find_ancestor(exp.Subquery)
+            if parent_subquery and from_clause.find_ancestor(exp.Select) == stmt:
+                continue
+            has_real_table = True
+            break
+
+        if not has_real_table:
+            return False
+
+        # 检查是否缺少 WHERE 条件
+        where = stmt.find(exp.Where)
+        if where:
+            return False
+
+        return True
 
 
 class DataDesensitizer:

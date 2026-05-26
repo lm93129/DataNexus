@@ -28,6 +28,16 @@ async def get_tables(
 ):
     service = MetadataService(db)
     tables = await service.get_tables(datasource_id)
+    # 审计日志
+    audit = AuditService(db)
+    await audit.log(
+        identity_id=user.id,
+        identity_type="user",
+        action="metadata_read_tables",
+        resource=f"datasource:{datasource_id}",
+        ip=request.client.host if request.client else None,
+        status="success",
+    )
     return [{"id": t.id, "table_name": t.table_name, "table_comment": t.table_comment} for t in tables]
 
 
@@ -41,6 +51,16 @@ async def get_columns(
 ):
     service = MetadataService(db)
     columns = await service.get_columns(table_metadata_id)
+    # 审计日志
+    audit = AuditService(db)
+    await audit.log(
+        identity_id=user.id,
+        identity_type="user",
+        action="metadata_read_columns",
+        resource=f"table_metadata:{table_metadata_id}",
+        ip=request.client.host if request.client else None,
+        status="success",
+    )
     return [
         {
             "id": c.id,
@@ -100,6 +120,16 @@ async def search_metadata(
     """搜索表名/列名/备注"""
     service = MetadataService(db)
     result = await service.search(keyword, datasource_id)
+    # 审计日志
+    audit = AuditService(db)
+    await audit.log(
+        identity_id=user.id,
+        identity_type="user",
+        action="metadata_search",
+        resource=f"keyword:{keyword}",
+        ip=request.client.host if request.client else None,
+        status="success",
+    )
     return {
         "tables": [
             {"id": t.id, "datasource_id": t.datasource_id, "table_name": t.table_name, "table_comment": t.table_comment}
@@ -119,7 +149,7 @@ async def update_table_comment(
     table_id: int,
     body: UpdateCommentRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("metadata:read")),
+    user: User = Depends(require_permission("metadata:write")),
 ):
     """更新表的业务注释"""
     service = MetadataService(db)
@@ -136,7 +166,7 @@ async def update_column_comment(
     column_id: int,
     body: UpdateCommentRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("metadata:read")),
+    user: User = Depends(require_permission("metadata:write")),
 ):
     """更新字段的业务注释"""
     service = MetadataService(db)

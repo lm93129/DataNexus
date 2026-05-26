@@ -45,11 +45,17 @@ async def execute_query(
     if deny_reason:
         raise HTTPException(status_code=429, detail=deny_reason)
 
+    # 获取动态最大行数限制
+    dynamic_max_rows = await rl_service.get_max_rows(
+        user_id=user.id, datasource_id=body.datasource_id
+    )
+
     service = QueryService(db)
     result = await service.execute_query(
         datasource_id=body.datasource_id,
         sql=body.sql,
         identity_id=user.id,
+        max_rows_override=dynamic_max_rows,
     )
 
     # 查询失败时自动生成纠错建议
@@ -160,12 +166,29 @@ async def export_query_csv(
     import csv
     import io
 
+    # 动态限流检查
+    rl_service = RateLimitService(db)
+    deny_reason = await rl_service.check_rate_limit(
+        user_id=user.id, datasource_id=body.datasource_id
+    )
+    if deny_reason:
+        raise HTTPException(status_code=429, detail=deny_reason)
+
+    dynamic_max_rows = await rl_service.get_max_rows(
+        user_id=user.id, datasource_id=body.datasource_id
+    )
+
     service = QueryService(db)
     result = await service.execute_query(
         datasource_id=body.datasource_id,
         sql=body.sql,
         identity_id=user.id,
+        max_rows_override=dynamic_max_rows,
     )
+
+    # 记录请求到限流计数器
+    await rl_service.record_request(user_id=user.id, datasource_id=body.datasource_id)
+
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result.get("error", "查询失败"))
 

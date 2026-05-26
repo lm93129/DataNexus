@@ -17,6 +17,17 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class UserProfile(BaseModel):
+    id: int
+    name: str
+    identity_type: str
+    role: str
+    is_active: bool
+    has_api_key: bool
+
+    model_config = {"from_attributes": True}
+
+
 router = APIRouter(prefix="/auth", tags=["认证"])
 
 
@@ -37,6 +48,15 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
         )
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     if not user.is_active:
+        audit = AuditService(db)
+        await audit.log(
+            identity_id=user.id,
+            identity_type="user",
+            action="login_disabled_account",
+            resource=f"user:{user.id}",
+            ip=request.client.host if request.client else None,
+            status="error",
+        )
         raise HTTPException(status_code=403, detail="账户已禁用")
 
     token = create_access_token(data={"sub": f"user:{user.id}", "type": user.identity_type})
@@ -52,9 +72,16 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
     return {"access_token": token, "token_type": "bearer"}
 
 
-@router.get("/me")
-async def get_me(user=Depends(get_current_user)):
-    return user
+@router.get("/me", response_model=UserProfile)
+async def get_me(user: User = Depends(get_current_user)):
+    return UserProfile(
+        id=user.id,
+        name=user.name,
+        identity_type=user.identity_type,
+        role=user.role,
+        is_active=user.is_active,
+        has_api_key=bool(user.api_key_hash),
+    )
 
 
 @router.get("/api-key/current")

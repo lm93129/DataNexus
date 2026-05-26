@@ -11,7 +11,20 @@ _counters: dict[str, list[float]] = defaultdict(list)
 
 
 def _counter_key(scope: str, target_id: int | None, user_id: int) -> str:
-    return f"{scope}:{target_id or 0}:{user_id}"
+    """生成计数器 key，按 scope 决定维度：
+    - global: 全局共享计数
+    - datasource: 按数据源计数（不绑定用户）
+    - user: 按用户计数
+    - api: 按 API 计数（不绑定用户）
+    """
+    if scope == "user":
+        return f"{scope}:{target_id or user_id}:{user_id}"
+    elif scope == "datasource":
+        return f"{scope}:{target_id or 0}:all"
+    elif scope == "api":
+        return f"{scope}:{target_id or 0}:all"
+    else:  # global
+        return f"global:0:all"
 
 
 def _clean_window(timestamps: list[float], window_seconds: int) -> list[float]:

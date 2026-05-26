@@ -31,6 +31,22 @@ const emit = defineEmits<{
 const editorContainer = ref<HTMLElement>()
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
 
+function setMarkers(markers: monaco.editor.IMarkerData[]) {
+  if (!editor) return
+  const model = editor.getModel()
+  if (!model) return
+  monaco.editor.setModelMarkers(model, 'sql-errors', markers)
+}
+
+function clearMarkers() {
+  if (!editor) return
+  const model = editor.getModel()
+  if (!model) return
+  monaco.editor.setModelMarkers(model, 'sql-errors', [])
+}
+
+defineExpose({ setMarkers, clearMarkers })
+
 onMounted(() => {
   if (!editorContainer.value) return
   editor = monaco.editor.create(editorContainer.value, {
@@ -46,6 +62,8 @@ onMounted(() => {
   })
   editor.onDidChangeModelContent(() => {
     emit('update:modelValue', editor!.getValue())
+    // 用户编辑时自动清除错误标记
+    clearMarkers()
   })
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
     emit('execute')

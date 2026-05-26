@@ -37,12 +37,13 @@ class SqlSuggestionService:
             return []
         except sqlglot.errors.ParseError as e:
             msg = str(e)
-            # 提取错误位置信息
-            col_match = re.search(r"col:\s*(\d+)", msg)
+            # 清理 ANSI 转义码后提取位置信息
+            clean_msg = re.sub(r'\x1b\[[0-9;]*m', '', msg)
+            col_match = re.search(r"[Cc]ol:\s*(\d+)", clean_msg)
             col = int(col_match.group(1)) if col_match else None
             return [{
                 "type": "syntax",
-                "message": f"语法错误: {msg.split('.')[0]}",
+                "message": f"语法错误: {clean_msg.split('.')[0]}",
                 "position": col,
             }]
 

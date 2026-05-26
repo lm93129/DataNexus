@@ -13,10 +13,19 @@ from contextvars import ContextVar
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
+from app.core.permissions import _has_permission
+
 mcp_server = Server("datanexus")
 
 # 存储当前 SSE 连接的认证用户信息，由 transport.py 在鉴权后设置
-mcp_user_context: ContextVar[dict] = ContextVar("mcp_user_context", default={"user_id": 0, "username": "anonymous", "role": "viewer"})
+mcp_user_context: ContextVar[dict] = ContextVar("mcp_user_context", default={"user_id": 0, "username": "anonymous", "role": "viewer", "identity_type": "user"})
+
+# MCP 工具名 -> 所需权限映射
+TOOL_PERMISSION_MAP: dict[str, str] = {
+    "get_database_schema": "metadata:read",
+    "query_database": "query:execute",
+    "call_custom_api": "custom_api:read",
+}
 
 
 @mcp_server.list_tools()
@@ -64,13 +73,34 @@ async def list_tools() -> list[Tool]:
 
 @mcp_server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    """统一工具调用入口，含审计日志"""
+    """统一工具调用入口，含权限校验和审计日志"""
     from app.core.database import async_session_factory
     from app.services.audit import AuditService
 
     # 从 ContextVar 获取当前连接的认证用户身份
     user_ctx = mcp_user_context.get()
     identity_id = user_ctx["user_id"]
+    role = user_ctx["role"]
+    identity_type = f"mcp_{user_ctx['identity_type']}"
+
+    # 防御性检查：未鉴权连接不允许调用工具
+    if identity_id == 0:
+        return [TextContent(type="text", text="鉴权失败：未识别的用户身份，请重新连接")]
+
+    # 权限校验：根据工具名检查角色权限
+    required_perm = TOOL_PERMISSION_MAP.get(name)
+    if required_perm and not _has_permission(role, required_perm):
+        # 权限拒绝写审计日志
+        async with async_session_factory() as db:
+            audit = AuditService(db)
+            await audit.log(
+                identity_id=identity_id,
+                identity_type=identity_type,
+                action=f"mcp_call:{name}",
+                resource=json.dumps(arguments, ensure_ascii=False)[:200],
+                status="denied",
+            )
+        return [TextContent(type="text", text=f"权限不足：角色 {role} 无权执行 {name}（需要 {required_perm}）")]
 
     async with async_session_factory() as db:
         result = await _dispatch_tool(db, name, arguments, identity_id)
@@ -86,7 +116,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         audit = AuditService(db)
         await audit.log(
             identity_id=identity_id,
-            identity_type="mcp",
+            identity_type=identity_type,
             action=f"mcp_call:{name}",
             resource=json.dumps(arguments, ensure_ascii=False)[:200],
             status=call_status,
@@ -154,11 +184,17 @@ async def _handle_query(
     if deny_reason:
         return [TextContent(type="text", text=f"请求被限流: {deny_reason}")]
 
+    # 获取动态最大行数
+    dynamic_max_rows = await rl_service.get_max_rows(
+        user_id=identity_id, datasource_id=arguments.get("datasource_id")
+    )
+
     service = QueryService(db)
     result = await service.execute_query(
         datasource_id=arguments["datasource_id"],
         sql=arguments["sql"],
         identity_id=identity_id,
+        max_rows_override=dynamic_max_rows,
     )
 
     # 记录请求

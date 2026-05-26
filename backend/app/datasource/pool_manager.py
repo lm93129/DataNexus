@@ -45,7 +45,9 @@ class PoolManager:
 
     def _build_url(self, ds: Datasource, password: str) -> str:
         self._check_driver(ds.type)
-        driver = self.DRIVER_MAP.get(ds.type, "postgresql+asyncpg")
+        driver = self.DRIVER_MAP.get(ds.type)
+        if not driver:
+            raise ValueError(f"不支持的数据源类型: '{ds.type}'，支持的类型: {list(self.DRIVER_MAP.keys())}")
         username = quote_plus(ds.username)
         pwd = quote_plus(password)
         return f"{driver}://{username}:{pwd}@{ds.host}:{ds.port}/{ds.database}"

@@ -34,7 +34,7 @@ class AlertRuleUpdate(BaseModel):
 @router.get("/rules")
 async def list_alert_rules(
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("audit:read")),
+    user: User = Depends(require_permission("alert:read")),
 ):
     service = AlertService(db)
     rules = await service.list_rules()
@@ -45,7 +45,7 @@ async def list_alert_rules(
 async def create_alert_rule(
     body: AlertRuleCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("audit:read")),
+    user: User = Depends(require_permission("alert:manage")),
 ):
     service = AlertService(db)
     data = body.model_dump()
@@ -59,7 +59,7 @@ async def update_alert_rule(
     rule_id: int,
     body: AlertRuleUpdate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("audit:read")),
+    user: User = Depends(require_permission("alert:manage")),
 ):
     service = AlertService(db)
     data = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -75,7 +75,7 @@ async def update_alert_rule(
 async def delete_alert_rule(
     rule_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("audit:read")),
+    user: User = Depends(require_permission("alert:manage")),
 ):
     service = AlertService(db)
     if not await service.delete_rule(rule_id):
@@ -87,7 +87,7 @@ async def list_alert_records(
     status: str | None = None,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("audit:read")),
+    user: User = Depends(require_permission("alert:read")),
 ):
     service = AlertService(db)
     records = await service.list_records(status=status, limit=limit)
@@ -97,7 +97,7 @@ async def list_alert_records(
 @router.get("/records/pending-count")
 async def get_pending_count(
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("audit:read")),
+    user: User = Depends(require_permission("alert:read")),
 ):
     service = AlertService(db)
     count = await service.pending_count()
@@ -108,7 +108,7 @@ async def get_pending_count(
 async def acknowledge_alert(
     record_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("audit:read")),
+    user: User = Depends(require_permission("alert:manage")),
 ):
     service = AlertService(db)
     if not await service.acknowledge_record(record_id):
@@ -120,7 +120,7 @@ async def acknowledge_alert(
 async def resolve_alert(
     record_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission("audit:read")),
+    user: User = Depends(require_permission("alert:manage")),
 ):
     service = AlertService(db)
     if not await service.resolve_record(record_id):

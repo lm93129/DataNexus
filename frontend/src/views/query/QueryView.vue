@@ -18,7 +18,7 @@
           </n-button>
         </n-space>
         <n-card>
-          <SqlEditor v-model:modelValue="sql" height="200px" @execute="handleExecute" />
+          <SqlEditor ref="editorRef" v-model:modelValue="sql" height="200px" @execute="handleExecute" />
         </n-card>
         <n-card v-if="result" title="查询结果">
           <template #header-extra>
@@ -100,11 +100,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
+import { MarkerSeverity } from 'monaco-editor'
 import SqlEditor from '@/components/SqlEditor.vue'
 import { executeQuery, getQueryHistory, deleteQueryHistory, exportQueryCsv, type QueryResult, type QueryHistoryItem, type SqlSuggestion } from '@/api/query'
 import { listDatasources } from '@/api/datasource'
 
 const message = useMessage()
+const editorRef = ref<InstanceType<typeof SqlEditor> | null>(null)
 
 const datasourceId = ref<number | null>(null)
 const dsOptions = ref<{ label: string; value: number }[]>([])
@@ -118,18 +120,91 @@ const history = ref<QueryHistoryItem[]>([])
 
 const resultColumns = ref<{ title: string; key: string }[]>([])
 
+// 将字符偏移量转换为行号和列号
+function offsetToPosition(text: string, offset: number): { line: number; col: number } {
+  let line = 1
+  let col = 1
+  for (let i = 0; i < offset && i < text.length; i++) {
+    if (text[i] === '\n') {
+      line++
+      col = 1
+    } else {
+      col++
+    }
+  }
+  return { line, col }
+}
+
+// 在 SQL 文本中查找标识符的位置（不区分大小写）
+function findWordPosition(text: string, word: string): { line: number; col: number } | null {
+  const regex = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+  const match = regex.exec(text)
+  if (!match) return null
+  return offsetToPosition(text, match.index)
+}
+
+// 根据 suggestions 生成 Monaco markers
+function buildMarkers(sqlText: string, items: SqlSuggestion[]): import('monaco-editor').editor.IMarkerData[] {
+  const markers: import('monaco-editor').editor.IMarkerData[] = []
+  for (const s of items) {
+    let startLine = 1
+    let startCol = 1
+    let endCol = startCol + 1
+
+    if (s.type === 'syntax' && s.position != null) {
+      // sqlglot position 是字符偏移量
+      const pos = offsetToPosition(sqlText, s.position)
+      startLine = pos.line
+      startCol = pos.col
+      // 标记到行尾或下一个空白
+      const lineText = sqlText.split('\n')[startLine - 1] || ''
+      const rest = lineText.substring(startCol - 1)
+      const wordMatch = rest.match(/^\S+/)
+      endCol = startCol + (wordMatch ? wordMatch[0].length : 1)
+    } else if (s.original) {
+      const pos = findWordPosition(sqlText, s.original)
+      if (pos) {
+        startLine = pos.line
+        startCol = pos.col
+        endCol = startCol + s.original.length
+      }
+    }
+
+    let msg = s.message
+    if (s.candidates && s.candidates.length) {
+      msg += `\n建议: ${s.candidates.join(', ')}`
+    }
+
+    markers.push({
+      severity: MarkerSeverity.Error,
+      message: msg,
+      startLineNumber: startLine,
+      startColumn: startCol,
+      endLineNumber: startLine,
+      endColumn: endCol,
+    })
+  }
+  return markers
+}
+
 async function handleExecute() {
   if (!datasourceId.value || !sql.value.trim()) return
   executing.value = true
   error.value = ''
   result.value = null
   suggestions.value = []
+  editorRef.value?.clearMarkers()
   try {
     const res = await executeQuery({ datasource_id: datasourceId.value, sql: sql.value })
     if (!res.success) {
       error.value = res.error || '查询执行失败'
       if (res.suggestions && res.suggestions.length) {
         suggestions.value = res.suggestions
+        // 设置 Monaco 错误标记
+        const markers = buildMarkers(sql.value, res.suggestions)
+        if (markers.length) {
+          editorRef.value?.setMarkers(markers)
+        }
       }
       return
     }

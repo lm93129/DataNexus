@@ -9,10 +9,19 @@ from app.models.metadata import ColumnMetadata, TableMetadata
 
 
 def _matches_blacklist(name: str, patterns: list[str]) -> bool:
-    """检查名称是否匹配黑名单中的任一模式（支持通配符）"""
+    """检查名称是否匹配黑名单中的任一模式（支持通配符）
+
+    匹配规则：
+    - 含通配符（* 或 ?）：使用 fnmatch 模式匹配
+    - 不含通配符：精确匹配或前缀匹配（如 "password" 匹配 "password_hash"）
+    """
     for pattern in patterns:
-        if fnmatch.fnmatch(name, pattern):
-            return True
+        if '*' in pattern or '?' in pattern:
+            if fnmatch.fnmatch(name, pattern):
+                return True
+        else:
+            if name == pattern or name.startswith(pattern + "_"):
+                return True
     return False
 
 
@@ -58,6 +67,10 @@ class MetadataService:
         return columns
 
     async def get_table_by_name(self, datasource_id: int, table_name: str) -> TableMetadata | None:
+        # 先检查黑名单
+        table_bl, _ = await self._get_blacklists(datasource_id)
+        if table_bl and _matches_blacklist(table_name, table_bl):
+            return None
         stmt = select(TableMetadata).where(
             TableMetadata.datasource_id == datasource_id,
             TableMetadata.table_name == table_name,

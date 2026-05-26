@@ -8,6 +8,7 @@ from app.datasource.pool_manager import pool_manager
 from app.middleware.rate_limit import limiter
 from app.models.user import User
 from app.schemas.datasource import DatasourceCreate, DatasourceResponse, DatasourceUpdate
+from app.services.alert import AlertService
 from app.services.audit import AuditService
 from app.services.datasource import DatasourceService
 
@@ -128,4 +129,15 @@ async def test_datasource_connection(
             await conn.execute(text("SELECT 1"))
         return {"success": True, "message": "连接成功"}
     except Exception as e:
+        # 连接失败时触发告警检测
+        try:
+            alert_service = AlertService(db)
+            await alert_service.check_and_trigger(
+                action="datasource_test",
+                status="error",
+                user_id=user.id,
+                datasource_id=ds_id,
+            )
+        except Exception:
+            pass
         return {"success": False, "message": f"连接失败: {str(e)}"}

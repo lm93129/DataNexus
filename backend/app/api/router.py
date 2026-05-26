@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.alert import router as alert_router
 from app.api.audit import router as audit_router
+from app.api.permissions import router as permissions_router
 from app.api.custom_api import router as custom_api_router
 from app.api.dashboard import router as dashboard_router
 from app.api.datasource import router as datasource_router
@@ -24,3 +25,4 @@ api_router.include_router(desensitize_router)
 api_router.include_router(custom_api_router)
 api_router.include_router(rate_limit_router)
 api_router.include_router(alert_router)
+api_router.include_router(permissions_router)
