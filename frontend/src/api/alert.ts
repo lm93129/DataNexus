@@ -23,6 +23,17 @@ export interface AlertRecord {
   resolved_at: string | null
 }
 
+export interface NotificationChannel {
+  id: number
+  name: string
+  channel_type: string
+  webhook_url: string
+  is_active: boolean
+  created_at: string | null
+}
+
+// ========== 告警规则 ==========
+
 export function listAlertRules(): Promise<AlertRule[]> {
   return request.get('/alerts/rules')
 }
@@ -39,6 +50,8 @@ export function deleteAlertRule(id: number): Promise<void> {
   return request.delete(`/alerts/rules/${id}`)
 }
 
+// ========== 告警记录 ==========
+
 export function listAlertRecords(status?: string, limit?: number): Promise<AlertRecord[]> {
   return request.get('/alerts/records', { params: { status, limit } })
 }
@@ -53,4 +66,34 @@ export function acknowledgeAlert(id: number): Promise<void> {
 
 export function resolveAlert(id: number): Promise<void> {
   return request.put(`/alerts/records/${id}/resolve`)
+}
+
+// ========== 通知渠道 ==========
+
+export function listChannels(): Promise<NotificationChannel[]> {
+  return request.get('/alerts/channels')
+}
+
+export function createChannel(data: Partial<NotificationChannel>): Promise<NotificationChannel> {
+  return request.post('/alerts/channels', data)
+}
+
+export function updateChannel(id: number, data: Partial<NotificationChannel>): Promise<NotificationChannel> {
+  return request.put(`/alerts/channels/${id}`, data)
+}
+
+export function deleteChannel(id: number): Promise<void> {
+  return request.delete(`/alerts/channels/${id}`)
+}
+
+export function testChannel(id: number): Promise<{ success: boolean; message: string }> {
+  return request.post(`/alerts/channels/${id}/test`)
+}
+
+export function getRuleChannels(ruleId: number): Promise<number[]> {
+  return request.get(`/alerts/rules/${ruleId}/channels`)
+}
+
+export function setRuleChannels(ruleId: number, channelIds: number[]): Promise<void> {
+  return request.put(`/alerts/rules/${ruleId}/channels`, { channel_ids: channelIds })
 }

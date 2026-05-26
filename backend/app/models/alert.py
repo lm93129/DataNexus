@@ -1,9 +1,18 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Table, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
+
+
+# 告警规则 ↔ 通知渠道 多对多关联表
+alert_rule_channels = Table(
+    "alert_rule_channels",
+    Base.metadata,
+    Column("rule_id", Integer, ForeignKey("alert_rules.id", ondelete="CASCADE"), primary_key=True),
+    Column("channel_id", Integer, ForeignKey("notification_channels.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class AlertRule(Base, TimestampMixin):
@@ -15,10 +24,6 @@ class AlertRule(Base, TimestampMixin):
     # 规则类型: error_rate / high_frequency / slow_query / connection_fail
     rule_type: Mapped[str] = mapped_column(String(30))
     # 阈值配置（JSON 字符串）
-    # error_rate: {"window_minutes": 5, "threshold_percent": 50}
-    # high_frequency: {"window_minutes": 1, "max_calls": 100}
-    # slow_query: {"threshold_ms": 5000}
-    # connection_fail: {"consecutive": 3}
     threshold_config: Mapped[str] = mapped_column(Text, default="{}")
     # 作用范围: global / user / datasource
     scope: Mapped[str] = mapped_column(String(20), default="global")
@@ -46,3 +51,16 @@ class AlertRecord(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class NotificationChannel(Base, TimestampMixin):
+    """通知渠道"""
+    __tablename__ = "notification_channels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    # 渠道类型: wecom / dingtalk / feishu
+    channel_type: Mapped[str] = mapped_column(String(20))
+    # Webhook 地址
+    webhook_url: Mapped[str] = mapped_column(String(500))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)

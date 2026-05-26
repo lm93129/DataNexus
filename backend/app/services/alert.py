@@ -4,8 +4,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import Date, cast, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.alert import AlertRecord, AlertRule
+from app.models.alert import AlertRecord, AlertRule, NotificationChannel, alert_rule_channels
 from app.models.audit import AuditLog
+from app.services.notification import NotificationService
 
 
 class AlertService:
@@ -196,7 +197,7 @@ class AlertService:
     async def _create_record_if_not_suppressed(
         self, rule: AlertRule, detail: str
     ):
-        """创建告警记录（带抑制检查）"""
+        """创建告警记录（带抑制检查），并触发通知"""
         suppress_since = datetime.now(timezone.utc) - timedelta(minutes=rule.suppress_minutes)
         existing = await self.db.execute(
             select(func.count()).select_from(AlertRecord)
@@ -217,3 +218,26 @@ class AlertService:
         )
         self.db.add(record)
         await self.db.commit()
+        await self.db.refresh(record)
+
+        # 查询规则关联的通知渠道并异步发送（失败不影响主流程）
+        try:
+            await self._notify_channels(rule, record)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("通知渠道发送失败")
+
+    async def _notify_channels(self, rule: AlertRule, record: AlertRecord):
+        """查询规则关联的活跃渠道，异步发送通知"""
+        result = await self.db.execute(
+            select(NotificationChannel)
+            .join(alert_rule_channels, NotificationChannel.id == alert_rule_channels.c.channel_id)
+            .where(
+                alert_rule_channels.c.rule_id == rule.id,
+                NotificationChannel.is_active == True,
+            )
+        )
+        channels = list(result.scalars().all())
+        if channels:
+            service = NotificationService()
+            await service.send_alert(record, channels)

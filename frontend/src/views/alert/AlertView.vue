@@ -25,11 +25,19 @@
           <n-data-table :columns="ruleColumns" :data="rules" :loading="rulesLoading" />
         </n-space>
       </n-tab-pane>
+      <n-tab-pane name="channels" tab="通知渠道">
+        <n-space vertical :size="16">
+          <n-space justify="end">
+            <n-button type="primary" @click="openCreateChannel">新增渠道</n-button>
+          </n-space>
+          <n-data-table :columns="channelColumns" :data="channels" :loading="channelsLoading" />
+        </n-space>
+      </n-tab-pane>
     </n-tabs>
   </n-space>
 
   <!-- 规则编辑弹窗 -->
-  <n-modal v-model:show="showRuleModal" :title="editingRule ? '编辑告警规则' : '新增告警规则'" preset="dialog" style="width: 520px">
+  <n-modal v-model:show="showRuleModal" :title="editingRule ? '编辑告警规则' : '新增告警规则'" preset="dialog" style="width: 560px">
     <n-form :model="ruleForm">
       <n-form-item label="规则名称">
         <n-input v-model:value="ruleForm.name" placeholder="如：全局失败率告警" />
@@ -73,37 +81,68 @@
       <n-form-item label="告警抑制（分钟）">
         <n-input-number v-model:value="ruleForm.suppress_minutes" :min="1" style="width: 100%" />
       </n-form-item>
+      <n-form-item label="通知渠道">
+        <n-select
+          v-model:value="ruleForm.channel_ids"
+          :options="channelSelectOptions"
+          multiple
+          placeholder="选择通知渠道（可多选）"
+        />
+      </n-form-item>
     </n-form>
     <template #action>
       <n-button @click="showRuleModal = false">取消</n-button>
       <n-button type="primary" @click="handleSaveRule">保存</n-button>
     </template>
   </n-modal>
+
+  <!-- 渠道编辑弹窗 -->
+  <n-modal v-model:show="showChannelModal" :title="editingChannel ? '编辑通知渠道' : '新增通知渠道'" preset="dialog" style="width: 520px">
+    <n-form :model="channelForm">
+      <n-form-item label="渠道名称">
+        <n-input v-model:value="channelForm.name" placeholder="如：运维告警群" />
+      </n-form-item>
+      <n-form-item label="渠道类型">
+        <n-select v-model:value="channelForm.channel_type" :options="channelTypeOptions" />
+      </n-form-item>
+      <n-form-item label="Webhook URL">
+        <n-input v-model:value="channelForm.webhook_url" placeholder="粘贴 Webhook 地址" />
+      </n-form-item>
+    </n-form>
+    <template #action>
+      <n-button @click="showChannelModal = false">取消</n-button>
+      <n-button type="primary" @click="handleSaveChannel">保存</n-button>
+    </template>
+  </n-modal>
 </template>
 
 <script setup lang="ts">
-import { ref, h, onMounted } from 'vue'
+import { ref, h, computed, onMounted } from 'vue'
 import { NButton, NTag, NSpace, NSwitch, useMessage, useDialog } from 'naive-ui'
 import {
   listAlertRules, createAlertRule, updateAlertRule, deleteAlertRule,
   listAlertRecords, acknowledgeAlert, resolveAlert,
-  type AlertRule, type AlertRecord,
+  listChannels, createChannel, updateChannel, deleteChannel, testChannel,
+  getRuleChannels, setRuleChannels,
+  type AlertRule, type AlertRecord, type NotificationChannel,
 } from '@/api/alert'
 
 const message = useMessage()
 const dialog = useDialog()
 
+// ========== 告警记录 ==========
 const rules = ref<AlertRule[]>([])
 const records = ref<AlertRecord[]>([])
 const rulesLoading = ref(false)
 const recordsLoading = ref(false)
 const filterStatus = ref<string | null>(null)
 
+// ========== 规则编辑 ==========
 const showRuleModal = ref(false)
 const editingRule = ref<AlertRule | null>(null)
-const ruleForm = ref(getDefaultForm())
+const ruleForm = ref(getDefaultRuleForm())
 
-function getDefaultForm() {
+function getDefaultRuleForm() {
   return {
     name: '',
     rule_type: 'error_rate',
@@ -111,8 +150,18 @@ function getDefaultForm() {
     scope: 'global',
     target_id: null as number | null,
     suppress_minutes: 10,
+    channel_ids: [] as number[],
   }
 }
+
+// ========== 通知渠道 ==========
+const channels = ref<NotificationChannel[]>([])
+const channelsLoading = ref(false)
+const showChannelModal = ref(false)
+const editingChannel = ref<NotificationChannel | null>(null)
+const channelForm = ref({ name: '', channel_type: 'wecom', webhook_url: '' })
+
+// ========== 选项定义 ==========
 
 const statusOptions = [
   { label: '待处理', value: 'pending' },
@@ -133,15 +182,24 @@ const scopeOptions = [
   { label: '按数据源', value: 'datasource' },
 ]
 
-const ruleTypeLabel: Record<string, string> = {
-  error_rate: '失败率',
-  high_frequency: '高频',
-  slow_query: '慢查询',
-  connection_fail: '连接失败',
-}
+const channelTypeOptions = [
+  { label: '企业微信', value: 'wecom' },
+  { label: '钉钉', value: 'dingtalk' },
+  { label: '飞书', value: 'feishu' },
+]
 
+const ruleTypeLabel: Record<string, string> = {
+  error_rate: '失败率', high_frequency: '高频', slow_query: '慢查询', connection_fail: '连接失败',
+}
+const channelTypeLabel: Record<string, string> = {
+  wecom: '企业微信', dingtalk: '钉钉', feishu: '飞书',
+}
 const statusLabel: Record<string, string> = { pending: '待处理', acknowledged: '已确认', resolved: '已解决' }
 const statusType: Record<string, string> = { pending: 'error', acknowledged: 'warning', resolved: 'success' }
+
+const channelSelectOptions = computed(() =>
+  channels.value.map(c => ({ label: `${c.name}（${channelTypeLabel[c.channel_type] || c.channel_type}）`, value: c.id }))
+)
 
 function onRuleTypeChange(type: string) {
   if (type === 'error_rate') ruleForm.value.threshold_config = { window_minutes: 5, threshold_percent: 50 }
@@ -149,6 +207,8 @@ function onRuleTypeChange(type: string) {
   else if (type === 'slow_query') ruleForm.value.threshold_config = { threshold_ms: 5000 }
   else if (type === 'connection_fail') ruleForm.value.threshold_config = { consecutive: 3 }
 }
+
+// ========== 表格列定义 ==========
 
 const ruleColumns = [
   { title: '规则名称', key: 'name' },
@@ -182,6 +242,28 @@ const recordColumns = [
   },
 ]
 
+const channelColumns = [
+  { title: '渠道名称', key: 'name' },
+  { title: '类型', key: 'channel_type', width: 100, render: (row: NotificationChannel) => h(NTag, { size: 'small', type: 'info' }, () => channelTypeLabel[row.channel_type] || row.channel_type) },
+  { title: 'Webhook URL', key: 'webhook_url', ellipsis: { tooltip: true }, render: (row: NotificationChannel) => maskUrl(row.webhook_url) },
+  { title: '状态', key: 'is_active', width: 70, render: (row: NotificationChannel) => h(NSwitch, { value: row.is_active, onUpdateValue: (v: boolean) => handleToggleChannel(row, v) }) },
+  {
+    title: '操作', key: 'actions', width: 200,
+    render: (row: NotificationChannel) => h(NSpace, { size: 4 }, () => [
+      h(NButton, { size: 'small', type: 'info', onClick: () => handleTestChannel(row) }, () => '测试'),
+      h(NButton, { size: 'small', onClick: () => openEditChannel(row) }, () => '编辑'),
+      h(NButton, { size: 'small', type: 'error', onClick: () => handleDeleteChannel(row) }, () => '删除'),
+    ]),
+  },
+]
+
+function maskUrl(url: string): string {
+  if (url.length <= 40) return url
+  return url.slice(0, 30) + '***' + url.slice(-8)
+}
+
+// ========== 数据加载 ==========
+
 async function loadRules() {
   rulesLoading.value = true
   try { rules.value = await listAlertRules() } catch { /* ignore */ } finally { rulesLoading.value = false }
@@ -192,14 +274,22 @@ async function loadRecords() {
   try { records.value = await listAlertRecords(filterStatus.value || undefined) } catch { /* ignore */ } finally { recordsLoading.value = false }
 }
 
+async function loadChannels() {
+  channelsLoading.value = true
+  try { channels.value = await listChannels() } catch { /* ignore */ } finally { channelsLoading.value = false }
+}
+
+// ========== 规则操作 ==========
+
 function openCreateRule() {
   editingRule.value = null
-  ruleForm.value = getDefaultForm()
+  ruleForm.value = getDefaultRuleForm()
   showRuleModal.value = true
 }
 
-function openEditRule(row: AlertRule) {
+async function openEditRule(row: AlertRule) {
   editingRule.value = row
+  const channelIds = await getRuleChannels(row.id).catch(() => [] as number[])
   ruleForm.value = {
     name: row.name,
     rule_type: row.rule_type,
@@ -207,6 +297,7 @@ function openEditRule(row: AlertRule) {
     scope: row.scope,
     target_id: row.target_id,
     suppress_minutes: row.suppress_minutes,
+    channel_ids: channelIds,
   }
   showRuleModal.value = true
 }
@@ -214,11 +305,16 @@ function openEditRule(row: AlertRule) {
 async function handleSaveRule() {
   if (!ruleForm.value.name) { message.warning('请输入规则名称'); return }
   try {
+    const { channel_ids, ...ruleData } = ruleForm.value
     if (editingRule.value) {
-      await updateAlertRule(editingRule.value.id, ruleForm.value as any)
+      await updateAlertRule(editingRule.value.id, ruleData as any)
+      await setRuleChannels(editingRule.value.id, channel_ids)
       message.success('更新成功')
     } else {
-      await createAlertRule(ruleForm.value as any)
+      const created = await createAlertRule(ruleData as any)
+      if (channel_ids.length > 0) {
+        await setRuleChannels(created.id, channel_ids)
+      }
       message.success('创建成功')
     }
     showRuleModal.value = false
@@ -247,24 +343,79 @@ function handleDeleteRule(row: AlertRule) {
   })
 }
 
+// ========== 记录操作 ==========
+
 async function handleAck(row: AlertRecord) {
-  try {
-    await acknowledgeAlert(row.id)
-    row.status = 'acknowledged'
-    message.success('已确认')
-  } catch { message.error('操作失败') }
+  try { await acknowledgeAlert(row.id); row.status = 'acknowledged'; message.success('已确认') } catch { message.error('操作失败') }
 }
 
 async function handleResolve(row: AlertRecord) {
+  try { await resolveAlert(row.id); row.status = 'resolved'; message.success('已解决') } catch { message.error('操作失败') }
+}
+
+// ========== 渠道操作 ==========
+
+function openCreateChannel() {
+  editingChannel.value = null
+  channelForm.value = { name: '', channel_type: 'wecom', webhook_url: '' }
+  showChannelModal.value = true
+}
+
+function openEditChannel(row: NotificationChannel) {
+  editingChannel.value = row
+  channelForm.value = { name: row.name, channel_type: row.channel_type, webhook_url: row.webhook_url }
+  showChannelModal.value = true
+}
+
+async function handleSaveChannel() {
+  if (!channelForm.value.name || !channelForm.value.webhook_url) {
+    message.warning('请填写完整信息')
+    return
+  }
   try {
-    await resolveAlert(row.id)
-    row.status = 'resolved'
-    message.success('已解决')
-  } catch { message.error('操作失败') }
+    if (editingChannel.value) {
+      await updateChannel(editingChannel.value.id, channelForm.value)
+      message.success('更新成功')
+    } else {
+      await createChannel(channelForm.value)
+      message.success('创建成功')
+    }
+    showChannelModal.value = false
+    loadChannels()
+  } catch (e: any) { message.error(e.response?.data?.detail || '操作失败') }
+}
+
+async function handleToggleChannel(row: NotificationChannel, active: boolean) {
+  try {
+    await updateChannel(row.id, { is_active: active })
+    row.is_active = active
+  } catch { message.error('切换失败') }
+}
+
+async function handleTestChannel(row: NotificationChannel) {
+  try {
+    const res = await testChannel(row.id)
+    if (res.success) message.success('测试发送成功')
+    else message.error(`测试失败: ${res.message}`)
+  } catch { message.error('测试请求失败') }
+}
+
+function handleDeleteChannel(row: NotificationChannel) {
+  dialog.warning({
+    title: '确认删除',
+    content: `确定删除通知渠道「${row.name}」？`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      await deleteChannel(row.id)
+      message.success('删除成功')
+      loadChannels()
+    },
+  })
 }
 
 onMounted(() => {
   loadRules()
   loadRecords()
-})
-</script>
+  loadChannels()
+})</script>

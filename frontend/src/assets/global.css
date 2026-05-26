@@ -1,3 +1,14 @@
+:root {
+  --brand-color: #2F54EB;
+  --brand-color-light: rgba(47, 84, 235, 0.06);
+  --bg-page: #f7f8fa;
+  --bg-card: #ffffff;
+  --border-light: #f0f0f0;
+  --text-primary: #1f2329;
+  --text-secondary: #646a73;
+  --text-placeholder: #8f959e;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -6,7 +17,9 @@
 
 html, body, #app {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  color: var(--text-primary);
+  background: var(--bg-page);
 }
 
 ::-webkit-scrollbar {
@@ -14,7 +27,15 @@ html, body, #app {
   height: 6px;
 }
 
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 ::-webkit-scrollbar-thumb {
-  background: #d9d9d9;
+  background: #c9cdd4;
   border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a9aeb8;
 }

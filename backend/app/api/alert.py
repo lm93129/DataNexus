@@ -2,12 +2,15 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.permissions import require_permission
+from app.models.alert import NotificationChannel, alert_rule_channels
 from app.models.user import User
 from app.services.alert import AlertService
+from app.services.notification import NotificationService
 
 router = APIRouter(prefix="/alerts", tags=["告警管理"])
 
@@ -152,4 +155,148 @@ def _record_to_dict(r: "AlertRecord") -> dict:
         "status": r.status,
         "triggered_at": r.triggered_at.isoformat() if r.triggered_at else None,
         "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
+    }
+
+
+# ========== 通知渠道 ==========
+
+
+class ChannelCreate(BaseModel):
+    name: str = Field(max_length=100)
+    channel_type: str = Field(pattern=r"^(wecom|dingtalk|feishu)$")
+    webhook_url: str = Field(max_length=500)
+
+
+class ChannelUpdate(BaseModel):
+    name: str | None = None
+    channel_type: str | None = Field(default=None, pattern=r"^(wecom|dingtalk|feishu)$")
+    webhook_url: str | None = None
+    is_active: bool | None = None
+
+
+class RuleChannelsUpdate(BaseModel):
+    channel_ids: list[int]
+
+
+@router.get("/channels")
+async def list_channels(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("alert:read")),
+):
+    result = await db.execute(
+        select(NotificationChannel).order_by(NotificationChannel.id.desc())
+    )
+    channels = result.scalars().all()
+    return [_channel_to_dict(c) for c in channels]
+
+
+@router.post("/channels")
+async def create_channel(
+    body: ChannelCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("alert:manage")),
+):
+    channel = NotificationChannel(
+        name=body.name,
+        channel_type=body.channel_type,
+        webhook_url=body.webhook_url,
+    )
+    db.add(channel)
+    await db.commit()
+    await db.refresh(channel)
+    return _channel_to_dict(channel)
+
+
+@router.put("/channels/{channel_id}")
+async def update_channel(
+    channel_id: int,
+    body: ChannelUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("alert:manage")),
+):
+    result = await db.execute(
+        select(NotificationChannel).where(NotificationChannel.id == channel_id)
+    )
+    channel = result.scalar_one_or_none()
+    if not channel:
+        raise HTTPException(status_code=404, detail="渠道不存在")
+    for k, v in body.model_dump(exclude_none=True).items():
+        setattr(channel, k, v)
+    await db.commit()
+    await db.refresh(channel)
+    return _channel_to_dict(channel)
+
+
+@router.delete("/channels/{channel_id}", status_code=204)
+async def delete_channel(
+    channel_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("alert:manage")),
+):
+    result = await db.execute(
+        delete(NotificationChannel).where(NotificationChannel.id == channel_id)
+    )
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="渠道不存在")
+    await db.commit()
+
+
+@router.post("/channels/{channel_id}/test")
+async def test_channel(
+    channel_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("alert:manage")),
+):
+    result = await db.execute(
+        select(NotificationChannel).where(NotificationChannel.id == channel_id)
+    )
+    channel = result.scalar_one_or_none()
+    if not channel:
+        raise HTTPException(status_code=404, detail="渠道不存在")
+    service = NotificationService()
+    success, msg = await service.test_channel(channel)
+    return {"success": success, "message": msg}
+
+
+@router.get("/rules/{rule_id}/channels")
+async def get_rule_channels(
+    rule_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("alert:read")),
+):
+    result = await db.execute(
+        select(alert_rule_channels.c.channel_id)
+        .where(alert_rule_channels.c.rule_id == rule_id)
+    )
+    return [row[0] for row in result.all()]
+
+
+@router.put("/rules/{rule_id}/channels")
+async def set_rule_channels(
+    rule_id: int,
+    body: RuleChannelsUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission("alert:manage")),
+):
+    # 先删除旧关联
+    await db.execute(
+        delete(alert_rule_channels).where(alert_rule_channels.c.rule_id == rule_id)
+    )
+    # 插入新关联
+    for cid in body.channel_ids:
+        await db.execute(
+            alert_rule_channels.insert().values(rule_id=rule_id, channel_id=cid)
+        )
+    await db.commit()
+    return {"ok": True}
+
+
+def _channel_to_dict(c: NotificationChannel) -> dict:
+    return {
+        "id": c.id,
+        "name": c.name,
+        "channel_type": c.channel_type,
+        "webhook_url": c.webhook_url,
+        "is_active": c.is_active,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
     }
