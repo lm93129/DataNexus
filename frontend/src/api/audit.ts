@@ -4,6 +4,7 @@ export interface AuditLog {
   id: number
   identity_id: number | null
   identity_type: string
+  username: string
   action: string
   resource: string
   request_summary?: string
@@ -18,6 +19,7 @@ export interface AuditQuery {
   page?: number
   page_size?: number
   identity_id?: number
+  identity_type?: string
   action?: string
 }
 

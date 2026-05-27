@@ -22,7 +22,7 @@ mcp_server = Server("datanexus")
 mcp_user_context: ContextVar[dict] = ContextVar("mcp_user_context")
 
 # 默认上下文（未认证时的 fallback）
-_DEFAULT_MCP_CONTEXT = {"user_id": 0, "username": "anonymous", "role": "viewer", "identity_type": "user"}
+_DEFAULT_MCP_CONTEXT = {"user_id": 0, "username": "anonymous", "role": "viewer", "identity_type": "user", "ip": None}
 
 # MCP 工具名 -> 所需权限映射
 TOOL_PERMISSION_MAP: dict[str, str] = {
@@ -96,6 +96,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     identity_id = user_ctx["user_id"]
     role = user_ctx["role"]
     identity_type = f"mcp_{user_ctx['identity_type']}"
+    client_ip = user_ctx.get("ip")
 
     # 防御性检查：未鉴权连接不允许调用工具
     if identity_id == 0:
@@ -104,6 +105,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     # 权限校验：根据工具名检查角色权限
     required_perm = TOOL_PERMISSION_MAP.get(name)
     if required_perm and not _has_permission(role, required_perm):
+        resource, summary = _extract_audit_fields(name, arguments)
         # 权限拒绝写审计日志
         async with async_session_factory() as db:
             audit = AuditService(db)
@@ -111,7 +113,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 identity_id=identity_id,
                 identity_type=identity_type,
                 action=f"mcp_call:{name}",
-                resource=json.dumps(arguments, ensure_ascii=False)[:200],
+                resource=resource,
+                request_summary=summary,
+                ip=client_ip,
                 status="denied",
             )
         return [TextContent(type="text", text=f"权限不足：角色 {role} 无权执行 {name}（需要 {required_perm}）")]
@@ -126,17 +130,44 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             else "success"
         )
 
+        resource, summary = _extract_audit_fields(name, arguments)
         # 写入审计日志
         audit = AuditService(db)
-        await audit.log(
+        await audit.log_safe(
             identity_id=identity_id,
             identity_type=identity_type,
             action=f"mcp_call:{name}",
-            resource=json.dumps(arguments, ensure_ascii=False)[:200],
+            resource=resource,
+            request_summary=summary,
+            ip=client_ip,
             status=call_status,
         )
 
         return result
+
+
+def _extract_audit_fields(name: str, arguments: dict) -> tuple[str, str | None]:
+    """从 MCP 工具调用参数中提取 resource 和 request_summary"""
+    ds_id = arguments.get("datasource_id")
+    resource = f"datasource:{ds_id}" if ds_id else name
+    summary = None
+
+    if name == "query_database":
+        summary = arguments.get("sql", "")[:500]
+    elif name == "get_database_schema":
+        table = arguments.get("table_name")
+        summary = f"表: {table}" if table else "获取表列表"
+    elif name == "call_custom_api":
+        api_id = arguments.get("api_id")
+        resource = f"custom_api:{api_id}" if api_id else name
+        params = arguments.get("params")
+        summary = json.dumps(params, ensure_ascii=False)[:200] if params else None
+    elif name == "list_datasources":
+        resource = "datasource:*"
+    else:
+        summary = json.dumps(arguments, ensure_ascii=False)[:200] if arguments else None
+
+    return resource, summary
 
 
 async def _dispatch_tool(

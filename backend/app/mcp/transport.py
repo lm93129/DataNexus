@@ -61,6 +61,7 @@ async def handle_sse(request: Request):
             "username": user.name,
             "role": user.role,
             "identity_type": user.identity_type,
+            "ip": request.client.host if request.client else None,
         })
 
         # 在隔离上下文中运行 MCP server（显式传递 context 确保 Task 全生命周期继承）

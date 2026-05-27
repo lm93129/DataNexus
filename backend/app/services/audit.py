@@ -5,6 +5,7 @@ from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -114,14 +115,22 @@ class AuditService:
         page: int = 1,
         page_size: int = 20,
         identity_id: int | None = None,
+        identity_type: str | None = None,
         action: str | None = None,
     ) -> dict:
-        stmt = select(AuditLog).order_by(desc(AuditLog.created_at))
+        stmt = (
+            select(AuditLog, User.name.label("username"))
+            .outerjoin(User, AuditLog.identity_id == User.id)
+            .order_by(desc(AuditLog.created_at))
+        )
         count_stmt = select(func.count()).select_from(AuditLog)
 
-        if identity_id:
+        if identity_id is not None:
             stmt = stmt.where(AuditLog.identity_id == identity_id)
             count_stmt = count_stmt.where(AuditLog.identity_id == identity_id)
+        if identity_type:
+            stmt = stmt.where(AuditLog.identity_type == identity_type)
+            count_stmt = count_stmt.where(AuditLog.identity_type == identity_type)
         if action:
             stmt = stmt.where(AuditLog.action == action)
             count_stmt = count_stmt.where(AuditLog.action == action)
@@ -134,6 +143,25 @@ class AuditService:
         offset = (page - 1) * page_size
         stmt = stmt.offset(offset).limit(page_size)
         result = await self.db.execute(stmt)
-        logs = list(result.scalars().all())
+        rows = result.all()
 
-        return {"items": logs, "total": total, "page": page, "page_size": page_size}
+        items = []
+        for row in rows:
+            log: AuditLog = row[0]
+            username: str | None = row.username
+            items.append({
+                "id": log.id,
+                "identity_id": log.identity_id,
+                "identity_type": log.identity_type,
+                "username": username or (f"user_{log.identity_id}" if log.identity_id else "系统"),
+                "action": log.action,
+                "resource": log.resource,
+                "request_summary": log.request_summary,
+                "response_summary": log.response_summary,
+                "ip": log.ip,
+                "duration_ms": log.duration_ms,
+                "status": log.status,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            })
+
+        return {"items": items, "total": total, "page": page, "page_size": page_size}
