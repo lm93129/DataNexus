@@ -20,8 +20,8 @@ from app.mcp.server import mcp_server, mcp_user_context
 
 logger = logging.getLogger(__name__)
 
-# SSE transport 实例，指定客户端 POST 消息的路径
-sse_transport = SseServerTransport("/mcp/messages/")
+# SSE transport 实例，指定客户端 POST 消息的路径（相对于 /mcp mount 点）
+sse_transport = SseServerTransport("/messages/")
 
 # MCP SSE 并发连接限制
 MAX_SSE_CONNECTIONS = 5

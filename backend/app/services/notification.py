@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from app.models.alert import NotificationChannel
+from app.models.alert import AlertRecord, NotificationChannel
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,7 @@
 """MCP Server 定义与工具处理
 
-提供三个工具：
+提供四个工具：
+- list_datasources：列出当前用户可访问的数据源
 - get_database_schema：获取数据库元数据
 - query_database：执行只读 SQL 查询
 - call_custom_api：调用预注册的自定义 API
@@ -25,6 +26,7 @@ _DEFAULT_MCP_CONTEXT = {"user_id": 0, "username": "anonymous", "role": "viewer",
 
 # MCP 工具名 -> 所需权限映射
 TOOL_PERMISSION_MAP: dict[str, str] = {
+    "list_datasources": "datasource:read",
     "get_database_schema": "metadata:read",
     "query_database": "query:execute",
     "call_custom_api": "custom_api:read",
@@ -35,6 +37,15 @@ TOOL_PERMISSION_MAP: dict[str, str] = {
 async def list_tools() -> list[Tool]:
     """返回 MCP server 支持的工具列表"""
     return [
+        Tool(
+            name="list_datasources",
+            description="列出当前用户可访问的所有数据源，返回数据源ID、名称、类型、数据库名和用途描述。调用其他工具前应先调用此工具了解可用数据源。",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        ),
         Tool(
             name="get_database_schema",
             description="获取数据库元数据：表名列表或指定表的字段结构",
@@ -132,7 +143,9 @@ async def _dispatch_tool(
     db, name: str, arguments: dict, identity_id: int
 ) -> list[TextContent]:
     """根据工具名称分发到对应处理函数"""
-    if name == "get_database_schema":
+    if name == "list_datasources":
+        return await _handle_list_datasources(db)
+    elif name == "get_database_schema":
         return await _handle_get_schema(db, arguments)
     elif name == "query_database":
         return await _handle_query(db, arguments, identity_id)
@@ -140,6 +153,25 @@ async def _dispatch_tool(
         return await _handle_custom_api(db, arguments)
     else:
         return [TextContent(type="text", text=f"未知工具: {name}")]
+
+
+async def _handle_list_datasources(db) -> list[TextContent]:
+    """列出所有已启用的数据源基本信息"""
+    from app.services.datasource import DatasourceService
+
+    service = DatasourceService(db)
+    datasources = await service.list_all()
+
+    active_ds = [ds for ds in datasources if ds.is_active]
+    if not active_ds:
+        return [TextContent(type="text", text="当前无可用数据源")]
+
+    lines = []
+    for ds in active_ds:
+        desc = f" -- {ds.description}" if ds.description else ""
+        lines.append(f"  - [ID={ds.id}] {ds.name} ({ds.type}/{ds.database}){desc}")
+
+    return [TextContent(type="text", text="可用数据源列表:\n" + "\n".join(lines))]
 
 
 async def _handle_get_schema(db, arguments: dict) -> list[TextContent]:
