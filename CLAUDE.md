@@ -58,7 +58,7 @@ frontend/src/ 包含：
 
 cd backend
 
-环境搭建：python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+环境搭建：python -m venv .venv && .venv/Scripts/pip install -e ".[all-drivers,dev]"
 开发服务器：.venv/Scripts/python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 导入验证：.venv/Scripts/python -c "from app.main import app; print('OK')"
 
@@ -78,6 +78,7 @@ DATANEXUS_DATABASE_URL=postgresql+asyncpg://user:pass@host:port/datanexus
 DATANEXUS_SECRET_KEY=change-me-in-production（用于 JWT 签名 + Fernet 密钥派生）
 DATANEXUS_DEBUG=true
 DATANEXUS_MAX_QUERY_ROWS=1000
+DATANEXUS_ORACLE_CLIENT_DIR=D:\oracle\instantclient_19_x（Oracle 11g thick 模式需要，需 19c+ 客户端）
 
 前端（vite.config.ts 代理配置）：
 /api/* 请求代理到后端 http://localhost:8000/api/v1/*

@@ -76,8 +76,16 @@ class SqlRiskControl:
         return ValidationResult(is_safe=True)
 
     def apply_row_limit(self, sql: str, max_rows: int | None = None, dialect: str | None = None) -> str:
-        """基于 AST 注入或修改 LIMIT"""
+        """基于 AST 注入行数限制，根据 dialect 生成对应语法"""
         limit = max_rows or self.max_rows
+
+        # Oracle 特殊处理：11g 不支持 FETCH FIRST，统一用 ROWNUM 包装
+        if dialect == "oracle":
+            sql_upper = sql.upper()
+            if "ROWNUM" in sql_upper or "FETCH" in sql_upper:
+                return sql
+            return f"SELECT * FROM ({sql.rstrip(';')}) WHERE ROWNUM <= {limit}"
+
         try:
             statements = sqlglot.parse(sql, dialect=dialect)
             if not statements or statements[0] is None:
@@ -97,9 +105,18 @@ class SqlRiskControl:
 
             return stmt.sql(dialect=dialect)
         except Exception:
-            if "LIMIT" not in sql.upper():
+            return self._fallback_row_limit(sql, limit, dialect)
+
+    def _fallback_row_limit(self, sql: str, limit: int, dialect: str | None) -> str:
+        """AST 解析失败时的回退行数限制注入"""
+        sql_upper = sql.upper()
+        if dialect == "oracle":
+            if "ROWNUM" not in sql_upper and "FETCH" not in sql_upper:
+                return f"SELECT * FROM ({sql.rstrip(';')}) WHERE ROWNUM <= {limit}"
+        else:
+            if "LIMIT" not in sql_upper:
                 return f"{sql.rstrip(';')} LIMIT {limit}"
-            return sql
+        return sql
 
     def _subquery_depth(self, node, current: int = 0) -> int:
         max_depth = current

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     max_query_rows: int = 1000
     query_timeout_ms: int = 60000  # SQL 查询超时（毫秒）
 
+    # Oracle Instant Client（thick 模式，支持 11g 等旧版本）
+    oracle_client_dir: str | None = None
+
     # CORS
     cors_origins: str = "http://localhost:3000"
 

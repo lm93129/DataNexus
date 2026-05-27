@@ -1,9 +1,12 @@
 import fnmatch
 import json
 
-from sqlalchemy import or_, select, text
+from typing import Union
+
+from sqlalchemy import Engine, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from app.datasource.pool_manager import async_connect
 from app.models.datasource import Datasource
 from app.models.metadata import ColumnMetadata, TableMetadata
 
@@ -132,14 +135,14 @@ class MetadataService:
 
         return {"tables": list(tables), "columns": list(columns)}
 
-    async def sync_from_source(self, datasource_id: int, engine: AsyncEngine, ds_type: str = "postgresql"):
+    async def sync_from_source(self, datasource_id: int, engine: Union[AsyncEngine, Engine], ds_type: str = "postgresql"):
         """从真实数据源同步元数据到平台缓存（表+列）
 
         根据数据源类型使用不同的元数据采集 SQL。
         """
         tables_sql, columns_sql_fn = self._get_metadata_queries(ds_type)
 
-        async with engine.connect() as conn:
+        async with async_connect(engine) as conn:
             # 同步表
             tables_result = await conn.execute(text(tables_sql))
             for row in tables_result:
@@ -154,9 +157,14 @@ class MetadataService:
                     table_meta = TableMetadata(
                         datasource_id=datasource_id,
                         table_name=row.table_name,
+                        table_comment=getattr(row, 'table_comment', None),
                     )
                     self.db.add(table_meta)
                     await self.db.flush()
+                else:
+                    comment = getattr(row, 'table_comment', None)
+                    if comment and table_meta.table_comment != comment:
+                        table_meta.table_comment = comment
 
                 # 同步该表的列信息
                 cols_sql = columns_sql_fn()
@@ -187,8 +195,12 @@ class MetadataService:
         """根据数据源类型返回表列表 SQL 和列信息 SQL 工厂函数"""
         if ds_type == "postgresql":
             tables_sql = (
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'"
+                "SELECT t.table_name, "
+                "obj_description(cls.oid) as table_comment "
+                "FROM information_schema.tables t "
+                "JOIN pg_class cls ON cls.relname = t.table_name "
+                "JOIN pg_namespace ns ON ns.oid = cls.relnamespace AND ns.nspname = t.table_schema "
+                "WHERE t.table_schema = current_schema() AND t.table_type = 'BASE TABLE'"
             )
             def columns_fn():
                 return (
@@ -209,8 +221,9 @@ class MetadataService:
                 )
         elif ds_type == "mysql":
             tables_sql = (
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
+                "SELECT t.table_name, t.table_comment "
+                "FROM information_schema.tables t "
+                "WHERE t.table_schema = DATABASE() AND t.table_type = 'BASE TABLE'"
             )
             def columns_fn():
                 return (
@@ -223,8 +236,13 @@ class MetadataService:
                 )
         elif ds_type == "mssql":
             tables_sql = (
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = 'dbo' AND table_type = 'BASE TABLE'"
+                "SELECT t.table_name, "
+                "CAST(ep.value AS NVARCHAR(500)) as table_comment "
+                "FROM information_schema.tables t "
+                "LEFT JOIN sys.extended_properties ep "
+                "  ON ep.major_id = OBJECT_ID(t.table_schema + '.' + t.table_name) "
+                "  AND ep.minor_id = 0 AND ep.name = 'MS_Description' "
+                "WHERE t.table_schema = 'dbo' AND t.table_type = 'BASE TABLE'"
             )
             def columns_fn():
                 return (
@@ -246,7 +264,9 @@ class MetadataService:
                 )
         elif ds_type == "oracle":
             tables_sql = (
-                "SELECT table_name FROM user_tables"
+                "SELECT t.table_name, c.comments as table_comment "
+                "FROM user_tables t "
+                "LEFT JOIN user_tab_comments c ON c.table_name = t.table_name"
             )
             def columns_fn():
                 return (

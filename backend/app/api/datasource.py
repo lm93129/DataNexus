@@ -8,7 +8,7 @@ from app.api.deps import get_db
 
 logger = logging.getLogger(__name__)
 from app.core.permissions import require_permission
-from app.datasource.pool_manager import pool_manager
+from app.datasource.pool_manager import async_connect, pool_manager
 from app.middleware.rate_limit import limiter
 from app.models.user import User
 from app.schemas.datasource import DatasourceCreate, DatasourceResponse, DatasourceUpdate
@@ -129,8 +129,9 @@ async def test_datasource_connection(
     try:
         password = service.get_password(ds)
         engine = await pool_manager.get_engine(ds, password)
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        async with async_connect(engine) as conn:
+            ping_sql = "SELECT 1 FROM DUAL" if ds.type == "oracle" else "SELECT 1"
+            await conn.execute(text(ping_sql))
         return {"success": True, "message": "连接成功"}
     except Exception as e:
         # 连接失败时触发告警检测

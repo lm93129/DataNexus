@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.datasource.pool_manager import pool_manager
+from app.datasource.pool_manager import async_connect, pool_manager
 from app.services.security import DataDesensitizer, SqlRiskControl
 
 logger = logging.getLogger(__name__)
@@ -73,9 +73,8 @@ class QueryService:
         except Exception as e:
             return {"success": False, "error": f"SQL 解析失败：{str(e)}", "data": []}
 
-        # 行数限制（AST级），支持动态覆盖
+        # 行数限制（AST级），支持动态覆盖——需先获取数据源类型以确定 SQL 方言
         effective_max_rows = max_rows_override if max_rows_override is not None else settings.max_query_rows
-        sql = self.risk_control.apply_row_limit(sql, effective_max_rows)
 
         # 执行查询
         try:
@@ -89,6 +88,10 @@ class QueryService:
             if not ds.is_active:
                 return {"success": False, "error": "数据源已停用", "data": []}
 
+            # 根据数据源类型确定 SQL 方言
+            dialect = ds.type if ds.type in ("mysql", "oracle") else None
+            sql = self.risk_control.apply_row_limit(sql, effective_max_rows, dialect=dialect)
+
             # 黑名单校验：检查 SQL 引用的表和字段是否在黑名单中
             blacklist_error = self._check_blacklist(sql, ds)
             if blacklist_error:
@@ -98,7 +101,7 @@ class QueryService:
             engine = await pool_manager.get_engine(ds, password)
 
             start = time.time()
-            async with engine.connect() as conn:
+            async with async_connect(engine) as conn:
                 # 设置语句超时（防止慢查询占用资源）
                 timeout_ms = settings.query_timeout_ms
                 try:
