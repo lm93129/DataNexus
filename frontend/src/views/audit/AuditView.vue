@@ -54,12 +54,29 @@ const pagination = ref({ page: 1, pageSize: 20, total: 0 })
 
 const actionOptions = [
   { label: '查询数据库', value: 'query_database' },
-  { label: '创建', value: 'create' },
-  { label: '更新', value: 'update' },
-  { label: '删除', value: 'delete' },
   { label: '登录成功', value: 'login_success' },
   { label: '登录失败', value: 'login_failed' },
+  { label: '账号禁用', value: 'login_disabled_account' },
+  { label: '生成 API Key', value: 'generate_api_key' },
+  { label: '撤销 API Key', value: 'revoke_api_key' },
+  { label: '创建用户', value: 'user_create' },
+  { label: '更新用户', value: 'user_update' },
+  { label: '删除用户', value: 'user_delete' },
+  { label: '创建数据源', value: 'datasource_create' },
+  { label: '更新数据源', value: 'datasource_update' },
+  { label: '删除数据源', value: 'datasource_delete' },
+  { label: '测试数据源', value: 'datasource_test' },
+  { label: '读取表列表', value: 'metadata_read_tables' },
+  { label: '读取列信息', value: 'metadata_read_columns' },
+  { label: '元数据搜索', value: 'metadata_search' },
   { label: '元数据同步', value: 'metadata_sync' },
+  { label: '创建脱敏规则', value: 'desensitize_rule_create' },
+  { label: '更新脱敏规则', value: 'desensitize_rule_update' },
+  { label: '删除脱敏规则', value: 'desensitize_rule_delete' },
+  { label: '分配脱敏规则', value: 'desensitize_assign' },
+  { label: '创建自定义 API', value: 'custom_api_create' },
+  { label: '更新自定义 API', value: 'custom_api_update' },
+  { label: '删除自定义 API', value: 'custom_api_delete' },
   { label: 'MCP 查询', value: 'mcp_call:query_database' },
   { label: 'MCP 元数据', value: 'mcp_call:get_database_schema' },
   { label: 'MCP 列表', value: 'mcp_call:list_datasources' },
@@ -75,20 +92,45 @@ const identityTypeMap: Record<string, { label: string; type: string }> = {
 }
 
 const actionTypeMap: Record<string, { label: string; type: string }> = {
-  query_database: { label: '查询', type: 'info' },
+  // 查询
+  query_database: { label: '数据库查询', type: 'info' },
+  // 认证
+  login: { label: '登录', type: 'default' },
+  login_success: { label: '登录成功', type: 'success' },
+  login_failed: { label: '登录失败', type: 'error' },
+  login_disabled_account: { label: '账号禁用', type: 'error' },
+  generate_api_key: { label: '生成密钥', type: 'info' },
+  revoke_api_key: { label: '撤销密钥', type: 'warning' },
+  // 用户管理
+  user_create: { label: '创建用户', type: 'success' },
+  user_update: { label: '更新用户', type: 'warning' },
+  user_delete: { label: '删除用户', type: 'error' },
+  // 数据源
+  datasource_create: { label: '创建数据源', type: 'success' },
+  datasource_update: { label: '更新数据源', type: 'warning' },
+  datasource_delete: { label: '删除数据源', type: 'error' },
+  datasource_test: { label: '测试连接', type: 'info' },
+  // 元数据
+  metadata_read_tables: { label: '读取表', type: 'default' },
+  metadata_read_columns: { label: '读取列', type: 'default' },
+  metadata_search: { label: '元数据搜索', type: 'default' },
+  metadata_sync: { label: '元数据同步', type: 'info' },
+  // 脱敏规则
+  desensitize_rule_create: { label: '创建脱敏规则', type: 'success' },
+  desensitize_rule_update: { label: '更新脱敏规则', type: 'warning' },
+  desensitize_rule_delete: { label: '删除脱敏规则', type: 'error' },
+  desensitize_assign: { label: '分配脱敏规则', type: 'info' },
+  // 自定义 API
+  custom_api_create: { label: '创建接口', type: 'success' },
+  custom_api_update: { label: '更新接口', type: 'warning' },
+  custom_api_delete: { label: '删除接口', type: 'error' },
+  // MCP 调用
   'mcp_call:query_database': { label: 'MCP查询', type: 'info' },
   'mcp_call:list_datasources': { label: 'MCP列表', type: 'default' },
   'mcp_call:get_database_schema': { label: 'MCP元数据', type: 'default' },
   'mcp_call:call_custom_api': { label: 'MCP接口', type: 'info' },
-  create: { label: '创建', type: 'success' },
-  update: { label: '更新', type: 'warning' },
-  delete: { label: '删除', type: 'error' },
-  login: { label: '登录', type: 'default' },
-  login_success: { label: '登录', type: 'success' },
-  login_failed: { label: '登录失败', type: 'error' },
-  login_disabled_account: { label: '账号禁用', type: 'error' },
-  metadata_sync: { label: '元数据同步', type: 'info' },
-  permission_denied: { label: '拒绝', type: 'error' },
+  // 权限
+  permission_denied: { label: '权限拒绝', type: 'error' },
 }
 
 const columns = [
