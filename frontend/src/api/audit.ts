@@ -21,6 +21,9 @@ export interface AuditQuery {
   identity_id?: number
   identity_type?: string
   action?: string
+  resource?: string
+  request_summary?: string
+  username?: string
 }
 
 export interface PaginatedResult<T> {

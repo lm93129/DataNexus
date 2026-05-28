@@ -46,6 +46,9 @@ async def get_audit_logs(
     identity_id: int | None = None,
     identity_type: str | None = None,
     action: str | None = None,
+    resource: str | None = None,
+    request_summary: str | None = None,
+    username: str | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(_require_audit_read()),
 ):
@@ -57,4 +60,5 @@ async def get_audit_logs(
     return await service.query_logs(
         page=page, page_size=page_size,
         identity_id=identity_id, identity_type=identity_type, action=action,
+        resource=resource, request_summary=request_summary, username=username,
     )

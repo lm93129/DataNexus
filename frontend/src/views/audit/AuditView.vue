@@ -2,12 +2,30 @@
   <n-space vertical :size="16">
     <n-card size="small">
       <n-space align="center" :wrap="true" :size="12">
+        <n-input
+          v-model:value="filters.username"
+          placeholder="调用者"
+          clearable
+          style="width: 140px"
+        />
         <n-select
           v-model:value="filters.action"
           :options="actionOptions"
           placeholder="操作类型"
           clearable
           style="width: 160px"
+        />
+        <n-input
+          v-model:value="filters.resource"
+          placeholder="资源（模糊）"
+          clearable
+          style="width: 160px"
+        />
+        <n-input
+          v-model:value="filters.request_summary"
+          placeholder="请求摘要（模糊）"
+          clearable
+          style="width: 180px"
         />
         <n-button type="primary" @click="handleSearch">查询</n-button>
         <n-button @click="handleReset">重置</n-button>
@@ -42,14 +60,19 @@
 
 <script setup lang="ts">
 import { ref, h, onMounted } from 'vue'
-import { NTag, NSpace, useMessage } from 'naive-ui'
+import { NTag, NSpace, NInput, useMessage } from 'naive-ui'
 import { getAuditLogs, type AuditLog } from '@/api/audit'
 
 const message = useMessage()
 const logs = ref<AuditLog[]>([])
 const loading = ref(false)
 
-const filters = ref({ action: null as string | null })
+const filters = ref({
+  action: null as string | null,
+  resource: null as string | null,
+  request_summary: null as string | null,
+  username: null as string | null,
+})
 const pagination = ref({ page: 1, pageSize: 20, total: 0 })
 
 const actionOptions = [
@@ -212,7 +235,7 @@ function handleSearch() {
 }
 
 function handleReset() {
-  filters.value = { action: null }
+  filters.value = { action: null, resource: null, request_summary: null, username: null }
   pagination.value.page = 1
   fetchData()
 }
@@ -230,6 +253,9 @@ async function fetchData() {
       page_size: pagination.value.pageSize,
     }
     if (filters.value.action) params.action = filters.value.action
+    if (filters.value.resource) params.resource = filters.value.resource
+    if (filters.value.request_summary) params.request_summary = filters.value.request_summary
+    if (filters.value.username) params.username = filters.value.username
     const res = await getAuditLogs(params)
     logs.value = res.items
     pagination.value.total = res.total

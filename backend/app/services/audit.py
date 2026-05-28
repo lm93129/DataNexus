@@ -117,13 +117,20 @@ class AuditService:
         identity_id: int | None = None,
         identity_type: str | None = None,
         action: str | None = None,
+        resource: str | None = None,
+        request_summary: str | None = None,
+        username: str | None = None,
     ) -> dict:
         stmt = (
             select(AuditLog, User.name.label("username"))
             .outerjoin(User, AuditLog.identity_id == User.id)
             .order_by(desc(AuditLog.created_at))
         )
-        count_stmt = select(func.count()).select_from(AuditLog)
+        count_stmt = (
+            select(func.count())
+            .select_from(AuditLog)
+            .outerjoin(User, AuditLog.identity_id == User.id)
+        )
 
         if identity_id is not None:
             stmt = stmt.where(AuditLog.identity_id == identity_id)
@@ -134,6 +141,15 @@ class AuditService:
         if action:
             stmt = stmt.where(AuditLog.action == action)
             count_stmt = count_stmt.where(AuditLog.action == action)
+        if resource:
+            stmt = stmt.where(AuditLog.resource.ilike(f"%{resource}%"))
+            count_stmt = count_stmt.where(AuditLog.resource.ilike(f"%{resource}%"))
+        if request_summary:
+            stmt = stmt.where(AuditLog.request_summary.ilike(f"%{request_summary}%"))
+            count_stmt = count_stmt.where(AuditLog.request_summary.ilike(f"%{request_summary}%"))
+        if username:
+            stmt = stmt.where(User.name.ilike(f"%{username}%"))
+            count_stmt = count_stmt.where(User.name.ilike(f"%{username}%"))
 
         # 总数
         total_result = await self.db.execute(count_stmt)
