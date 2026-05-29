@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +12,8 @@ from app.models.user import User
 from app.services.audit import AuditService
 from app.services.datasource import DatasourceService
 from app.services.metadata import MetadataService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/metadata", tags=["元数据"])
 
@@ -105,6 +109,8 @@ async def sync_metadata(
         )
         return {"success": True, "table_count": len(tables)}
     except Exception as e:
+        logger.exception("元数据同步失败: datasource_id=%s", datasource_id)
+        await db.rollback()
         raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
 
 

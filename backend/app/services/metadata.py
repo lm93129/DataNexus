@@ -28,6 +28,22 @@ def _matches_blacklist(name: str, patterns: list[str]) -> bool:
     return False
 
 
+def _metadata_cell(row, field_name: str):
+    """按平台内部约定读取元数据字段，不承担业务默认值兜底。
+
+    SQLAlchemy 暴露的行键由底层数据库驱动决定；MySQL 的 information_schema
+    会把未显式稳定的键暴露为大写，统一在采集边界兼容大小写，避免内部同步流程
+    散落重复判断。
+    """
+    row_mapping = row._mapping
+    candidates = (field_name, field_name.upper(), field_name.lower())
+    for candidate in candidates:
+        if candidate in row_mapping:
+            return row_mapping[candidate]
+    available_fields = ", ".join(str(key) for key in row_mapping.keys())
+    raise KeyError(f"元数据字段缺失: {field_name}; 可用字段: {available_fields}")
+
+
 class MetadataService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -146,30 +162,32 @@ class MetadataService:
             # 同步表
             tables_result = await conn.execute(text(tables_sql))
             for row in tables_result:
+                table_name = _metadata_cell(row, "table_name")
+                table_comment = _metadata_cell(row, "table_comment")
                 existing = await self.db.execute(
                     select(TableMetadata).where(
                         TableMetadata.datasource_id == datasource_id,
-                        TableMetadata.table_name == row.table_name,
+                        TableMetadata.table_name == table_name,
                     )
                 )
                 table_meta = existing.scalar_one_or_none()
                 if not table_meta:
                     table_meta = TableMetadata(
                         datasource_id=datasource_id,
-                        table_name=row.table_name,
-                        table_comment=getattr(row, 'table_comment', None),
+                        table_name=table_name,
+                        table_comment=table_comment,
                     )
                     self.db.add(table_meta)
                     await self.db.flush()
                 else:
-                    comment = getattr(row, 'table_comment', None)
+                    comment = table_comment
                     if comment and table_meta.table_comment != comment:
                         table_meta.table_comment = comment
 
                 # 同步该表的列信息
                 cols_sql = columns_sql_fn()
                 cols_result = await conn.execute(
-                    text(cols_sql), {"tbl": row.table_name}
+                    text(cols_sql), {"tbl": table_name}
                 )
                 existing_cols = await self.db.execute(
                     select(ColumnMetadata).where(
@@ -179,13 +197,14 @@ class MetadataService:
                 existing_col_names = {c.column_name for c in existing_cols.scalars().all()}
 
                 for col in cols_result:
-                    if col.column_name not in existing_col_names:
+                    column_name = _metadata_cell(col, "column_name")
+                    if column_name not in existing_col_names:
                         self.db.add(ColumnMetadata(
                             table_metadata_id=table_meta.id,
-                            column_name=col.column_name,
-                            data_type=col.data_type,
-                            column_comment=getattr(col, 'column_comment', None),
-                            is_primary_key=getattr(col, 'is_pk', False),
+                            column_name=column_name,
+                            data_type=_metadata_cell(col, "data_type"),
+                            column_comment=_metadata_cell(col, "column_comment"),
+                            is_primary_key=bool(_metadata_cell(col, "is_pk")),
                             is_blocked=False,
                         ))
 
