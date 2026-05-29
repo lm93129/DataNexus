@@ -8,6 +8,7 @@ from urllib.parse import quote_plus
 from sqlalchemy import Engine, Connection, create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from app.core.config import settings
 from app.models.datasource import Datasource
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,6 @@ def _ensure_oracle_thick():
     global _oracle_thick_initialized
     if _oracle_thick_initialized:
         return
-    from app.core.config import settings
     import oracledb
     try:
         lib_dir = settings.oracle_client_dir
@@ -34,6 +34,31 @@ def _ensure_oracle_thick():
     except oracledb.ProgrammingError:
         pass
     _oracle_thick_initialized = True
+
+
+def _seconds_from_ms(timeout_ms: int) -> float:
+    """将毫秒配置转换为驱动需要的秒，避免小于 1ms 的非法超时。"""
+    return max(timeout_ms, 1) / 1000
+
+
+def _oracle_connect_args() -> dict[str, float | int]:
+    """生成 Oracle 建连参数；建连超时和 SQL 往返超时分别控制。"""
+    return {
+        "tcp_connect_timeout": _seconds_from_ms(settings.oracle_connect_timeout_ms),
+        "retry_count": 0,
+    }
+
+
+def _apply_oracle_call_timeout(conn: Connection):
+    """为 Oracle DBAPI 连接设置每次网络往返超时，避免慢 SQL 长时间占用线程。"""
+    proxied_conn = conn.connection
+    raw_conn = (
+        getattr(proxied_conn, "driver_connection", None)
+        or getattr(proxied_conn, "dbapi_connection", None)
+        or proxied_conn
+    )
+    if hasattr(raw_conn, "call_timeout"):
+        raw_conn.call_timeout = int(settings.query_timeout_ms)
 
 
 class _SyncConnWrapper:
@@ -58,6 +83,8 @@ async def async_connect(engine: Union[AsyncEngine, Engine]):
     else:
         conn = await asyncio.to_thread(engine.connect)
         try:
+            if engine.url.get_backend_name() == "oracle":
+                await asyncio.to_thread(_apply_oracle_call_timeout, conn)
             yield _SyncConnWrapper(conn)
         finally:
             await asyncio.to_thread(conn.close)
@@ -130,7 +157,12 @@ class PoolManager:
             if ds.type == "oracle":
                 _ensure_oracle_thick()
                 self._engines[ds.id] = create_engine(
-                    url, pool_size=5, max_overflow=10, pool_pre_ping=True
+                    url,
+                    pool_size=5,
+                    max_overflow=10,
+                    pool_pre_ping=True,
+                    pool_timeout=_seconds_from_ms(settings.oracle_connect_timeout_ms),
+                    connect_args=_oracle_connect_args(),
                 )
             else:
                 self._engines[ds.id] = create_async_engine(

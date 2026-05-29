@@ -4,6 +4,8 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     app_name: str = "DataNexus"
     debug: bool = False
+    # SQL 明细日志会放大健康检查噪声，需要排查 SQL 时再显式启用。
+    sql_echo: bool = False
 
     # 平台数据库
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/datanexus"
@@ -20,6 +22,7 @@ class Settings(BaseSettings):
 
     # Oracle Instant Client（thick 模式，支持 11g 等旧版本）
     oracle_client_dir: str | None = None
+    oracle_connect_timeout_ms: int = 10000  # Oracle TCP 建连超时（毫秒）
 
     # CORS
     cors_origins: str = "http://localhost:3000"

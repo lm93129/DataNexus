@@ -4,10 +4,12 @@ import router from '@/router'
 
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
 const apiBaseUrl = configuredApiBaseUrl || '/api/v1'
+const configuredApiTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS)
+const apiTimeoutMs = Number.isFinite(configuredApiTimeoutMs) && configuredApiTimeoutMs > 0 ? configuredApiTimeoutMs : 70000
 
 const request = axios.create({
   baseURL: apiBaseUrl,
-  timeout: 15000,
+  timeout: apiTimeoutMs,
 })
 
 request.interceptors.request.use((config) => {

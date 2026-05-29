@@ -1,4 +1,5 @@
 import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
@@ -129,11 +130,21 @@ async def test_datasource_connection(
     try:
         password = service.get_password(ds)
         engine = await pool_manager.get_engine(ds, password)
+        start = time.monotonic()
         async with async_connect(engine) as conn:
+            connect_duration_ms = int((time.monotonic() - start) * 1000)
             ping_sql = "SELECT 1 FROM DUAL" if ds.type == "oracle" else "SELECT 1"
+            ping_start = time.monotonic()
             await conn.execute(text(ping_sql))
-        return {"success": True, "message": "连接成功"}
+            ping_duration_ms = int((time.monotonic() - ping_start) * 1000)
+        return {
+            "success": True,
+            "message": "连接成功",
+            "connect_duration_ms": connect_duration_ms,
+            "ping_duration_ms": ping_duration_ms,
+        }
     except Exception as e:
+        logger.exception("数据源连接测试失败: datasource_id=%s type=%s", ds_id, ds.type)
         # 连接失败时触发告警检测
         try:
             alert_service = AlertService(db)
