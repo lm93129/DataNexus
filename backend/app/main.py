@@ -1,65 +1,148 @@
 import logging
+from pathlib import Path
 from contextlib import asynccontextmanager
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.core.database import async_session_factory
+from app.core.database import async_session_factory, engine
+from app.core.permissions import PERMISSION_MATRIX
 from app.core.security import hash_password
 from app.mcp.transport import mcp_routes
 from app.middleware.rate_limit import limiter
-from app.models.user import Role, User, UserRole
+from app.models import Base
+from app.models.user import Role, RolePermission, User, UserRole
 
 logger = logging.getLogger(__name__)
 
+ROLE_DESCRIPTIONS = {
+    "admin": "系统管理员，拥有全部权限",
+    "analyst": "分析师，可执行查询和管理数据源",
+    "viewer": "查看者，仅可浏览元数据和查看日志",
+}
+
+
+def _database_has_no_tables(connection) -> bool:
+    return not inspect(connection).get_table_names()
+
+
+def _get_alembic_head_revision() -> str:
+    backend_dir = Path(__file__).resolve().parents[1]
+    alembic_config = Config(str(backend_dir / "alembic.ini"))
+    return ScriptDirectory.from_config(alembic_config).get_current_head()
+
+
+def _stamp_alembic_head(connection) -> None:
+    head_revision = _get_alembic_head_revision()
+    connection.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS alembic_version "
+            "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
+        )
+    )
+    connection.execute(text("DELETE FROM alembic_version"))
+    connection.execute(
+        text("INSERT INTO alembic_version (version_num) VALUES (:version_num)"),
+        {"version_num": head_revision},
+    )
+
+
+async def create_tables_for_empty_database() -> None:
+    """仅在平台库完全为空时创建表结构；已有表时交由 Alembic 迁移维护。"""
+    async with engine.begin() as connection:
+        is_empty_database = await connection.run_sync(_database_has_no_tables)
+        if not is_empty_database:
+            return
+
+        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(_stamp_alembic_head)
+        logger.info("检测到空数据库，已创建表结构并标记 Alembic head")
+
+
+async def init_roles_and_permissions(session) -> dict[str, Role]:
+    role_by_name: dict[str, Role] = {}
+    for role_name, description in ROLE_DESCRIPTIONS.items():
+        role_query = await session.execute(select(Role).where(Role.name == role_name))
+        role = role_query.scalar_one_or_none()
+        if role is None:
+            role = Role(name=role_name, description=description)
+            session.add(role)
+        role_by_name[role_name] = role
+
+    await session.flush()
+
+    for role_name, permissions in PERMISSION_MATRIX.items():
+        role = role_by_name[role_name]
+        for permission_name in permissions:
+            resource_type, action = permission_name.split(":", 1)
+            permission_query = await session.execute(
+                select(RolePermission).where(
+                    RolePermission.role_id == role.id,
+                    RolePermission.resource_type == resource_type,
+                    RolePermission.resource_id == 0,
+                    RolePermission.permission == action,
+                )
+            )
+            if permission_query.scalar_one_or_none() is None:
+                session.add(
+                    RolePermission(
+                        role_id=role.id,
+                        resource_type=resource_type,
+                        resource_id=0,
+                        permission=action,
+                    )
+                )
+
+    return role_by_name
+
 
 async def init_default_admin():
-    """启动时检查并创建默认管理员账号和角色"""
+    """启动时检查并创建默认管理员账号、角色和权限。"""
     async with async_session_factory() as session:
-        # 初始化默认角色
-        for role_name, desc in [
-            ("admin", "系统管理员，拥有全部权限"),
-            ("analyst", "分析师，可执行查询和管理数据源"),
-            ("viewer", "查看者，仅可浏览元数据和查看日志"),
-        ]:
-            result = await session.execute(select(Role).where(Role.name == role_name))
-            if not result.scalar_one_or_none():
-                session.add(Role(name=role_name, description=desc))
+        role_by_name = await init_roles_and_permissions(session)
 
-        await session.flush()
-
-        # 检查是否存在管理员用户
-        result = await session.execute(select(User).where(User.name == "admin"))
-        admin_user = result.scalar_one_or_none()
+        admin_query = await session.execute(select(User).where(User.name == "admin"))
+        admin_user = admin_query.scalar_one_or_none()
 
         if not admin_user:
             admin_user = User(
                 name="admin",
                 identity_type="user",
                 password_hash=hash_password("admin123"),
+                role="admin",
                 is_active=True,
             )
             session.add(admin_user)
             await session.flush()
 
-            # 关联 admin 角色
-            role_result = await session.execute(select(Role).where(Role.name == "admin"))
-            admin_role = role_result.scalar_one()
-            session.add(UserRole(user_id=admin_user.id, role_id=admin_role.id))
-
             logger.info("已创建默认管理员账号: admin（请立即修改默认密码）")
+        elif admin_user.role != "admin":
+            admin_user.role = "admin"
+
+        admin_role = role_by_name["admin"]
+        user_role_query = await session.execute(
+            select(UserRole).where(
+                UserRole.user_id == admin_user.id,
+                UserRole.role_id == admin_role.id,
+            )
+        )
+        if user_role_query.scalar_one_or_none() is None:
+            session.add(UserRole(user_id=admin_user.id, role_id=admin_role.id))
 
         await session.commit()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await create_tables_for_empty_database()
     await init_default_admin()
     yield
     # 关闭时清理所有数据源连接池
