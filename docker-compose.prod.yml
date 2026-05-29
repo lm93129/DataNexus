@@ -1,0 +1,37 @@
+name: datanexus
+
+services:
+  backend:
+    image: ${DOCKERHUB_USERNAME:-lm93129}/datanexus-backend:${DATANEXUS_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${DATANEXUS_BACKEND_PORT:-8000}:8000"
+    environment:
+      DATANEXUS_DATABASE_URL: ${DATANEXUS_DATABASE_URL:?请设置平台数据库连接串}
+      DATANEXUS_SECRET_KEY: ${DATANEXUS_SECRET_KEY:?请设置 JWT 密钥}
+      DATANEXUS_AES_KEY: ${DATANEXUS_AES_KEY:?请设置 AES 密钥}
+      DATANEXUS_DEBUG: ${DATANEXUS_DEBUG:-false}
+      DATANEXUS_MAX_QUERY_ROWS: ${DATANEXUS_MAX_QUERY_ROWS:-1000}
+      DATANEXUS_QUERY_TIMEOUT_MS: ${DATANEXUS_QUERY_TIMEOUT_MS:-60000}
+      DATANEXUS_ORACLE_CLIENT_DIR: ${DATANEXUS_ORACLE_CLIENT_DIR:-/opt/oracle/instantclient_19_31}
+      DATANEXUS_ORACLE_CONNECT_TIMEOUT_MS: ${DATANEXUS_ORACLE_CONNECT_TIMEOUT_MS:-10000}
+      DATANEXUS_CORS_ORIGINS: ${DATANEXUS_CORS_ORIGINS:-http://localhost:8088}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  frontend:
+    image: ${DOCKERHUB_USERNAME:-lm93129}/datanexus-frontend:${DATANEXUS_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${DATANEXUS_FRONTEND_PORT:-8088}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
