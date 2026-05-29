@@ -2,8 +2,11 @@ import axios from 'axios'
 import { getToken, removeToken } from '@/utils/token'
 import router from '@/router'
 
+const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
+const apiBaseUrl = configuredApiBaseUrl || '/api/v1'
+
 const request = axios.create({
-  baseURL: '/api/v1',
+  baseURL: apiBaseUrl,
   timeout: 15000,
 })
 

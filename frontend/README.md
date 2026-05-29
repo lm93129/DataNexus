@@ -96,10 +96,18 @@ pnpm preview
 当前开发环境变量位于 `.env.development`：
 
 ```env
-VITE_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=/api/v1
 ```
 
-注意：当前请求实例使用相对路径 `/api/v1`，开发环境主要依赖 Vite proxy 转发到后端。
+默认值 `/api/v1` 会在开发环境通过 Vite proxy 转发到后端，在 Docker Compose 中通过 nginx 转发到 `backend:8000`。
+
+如需连接其他浏览器可访问的后端地址，请使用完整 API 前缀，例如：
+
+```env
+VITE_API_BASE_URL=http://localhost:8000/api/v1
+```
+
+Docker 镜像构建时会读取同名构建参数；修改该变量后需要重新构建前端镜像。
 
 ## 页面与路由
 

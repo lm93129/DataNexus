@@ -32,7 +32,7 @@ npx vue-tsc --noEmit  # 仅类型检查
 
 ### API 层 (src/api/)
 
-- `index.ts`: Axios 实例，baseURL="/api/v1"，自动注入 Bearer token，401 时跳转登录
+- `index.ts`: Axios 实例，baseURL 默认读取 `VITE_API_BASE_URL`，缺省为 `/api/v1`，自动注入 Bearer token，401 时跳转登录
 - 各模块文件导出类型化的请求函数，返回值已经是 response.data（拦截器处理）
 - 后端 API 前缀 /api/v1，Vite proxy 将 /api/* 转发到 http://localhost:8000
 
